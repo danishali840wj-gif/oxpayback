@@ -55,8 +55,21 @@ const syncUserToDbAndMemory = async ({ phone, password, otp, inviterCode, role =
   return dbUser || memUser;
 };
 
-// Optional seed function placeholder
-const seedAdminToDb = async () => {};
+// Seed function to ensure Admin user is present in MongoDB Atlas
+const seedAdminToDb = async () => {
+  try {
+    await syncUserToDbAndMemory({
+      phone: '0000000000',
+      password: 'admin123',
+      otp: '1234',
+      inviterCode: 'ADMIN001',
+      role: 'admin',
+    });
+    console.log('Admin account seeded to DB (Phone: 0000000000, Pass: admin123)');
+  } catch (err) {
+    console.error('Failed to seed admin user:', err.message);
+  }
+};
 
 // Register Route
 router.post('/register', async (req, res) => {
