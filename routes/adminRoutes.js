@@ -346,13 +346,13 @@ router.delete('/users/:identifier', async (req, res) => {
   }
 });
 
-// GET /api/admin/upi-partners - Fetch all UPI partners status
-router.get('/upi-partners', (req, res) => {
+// GET /api/admin/upi-partners or /api/upi-partners - Fetch all UPI partners status
+router.get(['/upi-partners', '/admin/upi-partners'], (req, res) => {
   return res.json({ success: true, partners: upiPartners });
 });
 
-// POST /api/admin/upi-partners/toggle - Toggle partner ON/OFF status
-router.post('/upi-partners/toggle', (req, res) => {
+// POST /api/admin/upi-partners/toggle or /api/upi-partners/toggle - Toggle partner ON/OFF status
+router.post(['/upi-partners/toggle', '/admin/upi-partners/toggle'], (req, res) => {
   try {
     const { partnerId, enabled } = req.body;
     upiPartners = upiPartners.map((p) => {
@@ -367,8 +367,8 @@ router.post('/upi-partners/toggle', (req, res) => {
   }
 });
 
-// POST /api/user/link-kyc - Register user KYC request
-router.post('/user/link-kyc', (req, res) => {
+// POST /api/user/link-kyc or /link-kyc - Register user KYC request
+router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc'], (req, res) => {
   try {
     const { phone, userName, upiNo, partnerId, partnerName } = req.body;
     if (!userName || !upiNo || upiNo.trim().length !== 10) {
@@ -397,8 +397,8 @@ router.post('/user/link-kyc', (req, res) => {
   }
 });
 
-// GET /api/user/kyc-requests - Fetch user active KYC requests
-router.get('/user/kyc-requests', (req, res) => {
+// GET /api/user/kyc-requests or /kyc-requests - Fetch user active KYC requests
+router.get(['/user/kyc-requests', '/kyc-requests', '/admin/user/kyc-requests'], (req, res) => {
   const { phone } = req.query;
   const userPhone = phone || '9341048237';
   const userReqs = kycRequests.filter((k) => k.phone === userPhone);
@@ -406,7 +406,7 @@ router.get('/user/kyc-requests', (req, res) => {
 });
 
 // GET /api/admin/kyc-requests - Fetch all KYC requests for Admin Panel
-router.get('/admin/kyc-requests', (req, res) => {
+router.get(['/admin/kyc-requests', '/all-kyc-requests'], (req, res) => {
   return res.json({ success: true, requests: kycRequests });
 });
 
