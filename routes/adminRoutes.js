@@ -23,26 +23,42 @@ let depositRequests = [
   },
 ];
 
+// Helper to clean up expired pending requests (> 5 minutes)
+const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const filterExpiredRequests = () => {
+  const now = Date.now();
+  depositRequests = depositRequests.filter((r) => {
+    if (r.status === 'pending_qr') {
+      const age = now - new Date(r.createdAt).getTime();
+      return age < FIVE_MINUTES_MS; // Keep only if less than 5 minutes old
+    }
+    return true; // Keep completed/success requests
+  });
+};
+
 // POST /api/deposit-request - Register user USDT deposit request
 router.post('/deposit-request', (req, res) => {
   try {
     const { phone, usdtAmount, iTokens } = req.body;
     const userPhone = phone || 'Guest User';
-    
-    // Remove existing pending requests from same user
-    depositRequests = depositRequests.filter(r => r.phone !== userPhone);
+
+    // Auto-clean expired pending requests first
+    filterExpiredRequests();
+
+    // Remove previous pending requests from same user
+    depositRequests = depositRequests.filter((r) => !(r.phone === userPhone && r.status === 'pending_qr'));
 
     const newRequest = {
       id: Date.now().toString(),
       phone: userPhone,
       usdtAmount: parseFloat(usdtAmount) || 100,
-      iTokens: parseFloat(iTokens) || (parseFloat(usdtAmount || 100) * 107.5),
+      iTokens: parseFloat(iTokens) || parseFloat(usdtAmount || 100) * 107.5,
       createdAt: new Date().toISOString(),
-      status: (memorySettings.usdtQrUrl && memorySettings.usdtAddress) ? 'qr_ready' : 'pending_qr',
+      status: 'pending_qr',
     };
 
     depositRequests.unshift(newRequest);
-    if (depositRequests.length > 20) depositRequests = depositRequests.slice(0, 20);
+    if (depositRequests.length > 50) depositRequests = depositRequests.slice(0, 50);
 
     return res.json({ success: true, request: newRequest });
   } catch (err) {
@@ -50,15 +66,16 @@ router.post('/deposit-request', (req, res) => {
   }
 });
 
-// GET /api/admin/deposit-requests - Fetch all deposit requests for Admin Panel
+// GET /api/admin/deposit-requests - Fetch all deposit requests for Admin Panel (Auto-purges >5 min expired pending)
 router.get('/deposit-requests', (req, res) => {
+  filterExpiredRequests();
   return res.json({ success: true, requests: depositRequests });
 });
 
 // DELETE /api/admin/deposit-requests/:id - Clear request
 router.delete('/deposit-requests/:id', (req, res) => {
   const { id } = req.params;
-  depositRequests = depositRequests.filter(r => r.id !== id);
+  depositRequests = depositRequests.filter((r) => r.id !== id);
   return res.json({ success: true, requests: depositRequests });
 });
 
@@ -87,16 +104,30 @@ router.get('/settings', async (req, res) => {
   }
 });
 
-// POST /api/admin/settings - Save/Update admin USDT settings
+// POST /api/admin/settings - Save/Update admin USDT settings & fulfill deposit request
 router.post('/settings', async (req, res) => {
   try {
-    const { usdtAddress, usdtQrUrl } = req.body;
+    const { usdtAddress, usdtQrUrl, requestId, phone } = req.body;
     if (usdtAddress !== undefined) memorySettings.usdtAddress = usdtAddress;
     if (usdtQrUrl !== undefined) memorySettings.usdtQrUrl = usdtQrUrl;
 
-    // Update statuses of deposit requests to qr_ready
+    // Filter expired requests first
+    filterExpiredRequests();
+
+    // Mark the request as 'success' when admin uploads address & QR image!
     if (memorySettings.usdtAddress && memorySettings.usdtQrUrl) {
-      depositRequests.forEach(r => { r.status = 'qr_ready'; });
+      depositRequests.forEach((r) => {
+        if (requestId && r.id === requestId) {
+          r.status = 'success';
+          r.fulfilledAt = new Date().toISOString();
+        } else if (phone && r.phone === phone && r.status === 'pending_qr') {
+          r.status = 'success';
+          r.fulfilledAt = new Date().toISOString();
+        } else if (!requestId && !phone && r.status === 'pending_qr') {
+          r.status = 'success';
+          r.fulfilledAt = new Date().toISOString();
+        }
+      });
     }
 
     try {
@@ -111,8 +142,9 @@ router.post('/settings', async (req, res) => {
 
     return res.json({
       success: true,
-      message: 'USDT deposit settings saved successfully.',
+      message: 'USDT deposit settings saved & request fulfilled successfully.',
       settings: memorySettings,
+      requests: depositRequests,
     });
   } catch (err) {
     console.error('Settings save error:', err);
