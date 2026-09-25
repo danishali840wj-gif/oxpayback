@@ -608,8 +608,10 @@ router.get(['/admin/all-user-upi', '/admin/user-upi-all'], (req, res) => {
 // POST /api/admin/update-upi-status - Update status of user UPI item
 router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-kyc-status'], (req, res) => {
   try {
-    const { itemId, requestId, status } = req.body;
+    const { itemId, requestId, status, vpa, upiId } = req.body;
     const targetId = itemId || requestId;
+    const assignedVpa = vpa || upiId;
+
     if (!targetId || !status) {
       return res.status(400).json({ error: 'Target ID and status are required.' });
     }
@@ -640,14 +642,23 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
     userUpiItems = userUpiItems.map((item) => {
       if (item.id === targetId || item.id === itemId) {
         updatedPhone = item.phone;
-        return { ...item, status, statusColor, warning, stopped };
+        const updatedItem = { ...item, status, statusColor, warning, stopped };
+        if (assignedVpa && assignedVpa.trim()) {
+          updatedItem.vpa = assignedVpa.trim();
+        }
+        return updatedItem;
       }
       return item;
     });
 
     kycRequests = kycRequests.map((k) => {
       if (k.id === targetId || k.id === requestId || (updatedPhone && k.phone === updatedPhone)) {
-        return { ...k, status };
+        const updatedK = { ...k, status };
+        if (assignedVpa && assignedVpa.trim()) {
+          updatedK.upiId = assignedVpa.trim();
+          updatedK.vpa = assignedVpa.trim();
+        }
+        return updatedK;
       }
       return k;
     });
