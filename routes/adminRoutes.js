@@ -638,10 +638,22 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
       stopped = true;
     }
 
-    let updatedPhone = null;
+    // Find target record in either kycRequests or userUpiItems
+    const targetKyc = kycRequests.find((k) => k.id === targetId || k.id === itemId || k.id === requestId);
+    const targetUpi = userUpiItems.find((u) => u.id === targetId || u.id === itemId || u.id === requestId);
+
+    const targetPhone = targetKyc?.phone || targetUpi?.phone;
+    const targetPartner = targetKyc?.partnerId || targetUpi?.partnerId;
+    const targetUpiNo = targetKyc?.upiNo || targetUpi?.upiNo;
+
     userUpiItems = userUpiItems.map((item) => {
-      if (item.id === targetId || item.id === itemId) {
-        updatedPhone = item.phone;
+      const isMatch =
+        item.id === targetId ||
+        item.id === itemId ||
+        item.id === requestId ||
+        (targetPhone && item.phone === targetPhone && (item.upiNo === targetUpiNo || item.partnerId === targetPartner));
+
+      if (isMatch) {
         const updatedItem = { ...item, status, statusColor, warning, stopped };
         if (assignedVpa && assignedVpa.trim()) {
           updatedItem.vpa = assignedVpa.trim();
@@ -652,7 +664,13 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
     });
 
     kycRequests = kycRequests.map((k) => {
-      if (k.id === targetId || k.id === requestId || (updatedPhone && k.phone === updatedPhone)) {
+      const isMatch =
+        k.id === targetId ||
+        k.id === itemId ||
+        k.id === requestId ||
+        (targetPhone && k.phone === targetPhone && (k.upiNo === targetUpiNo || k.partnerId === targetPartner));
+
+      if (isMatch) {
         const updatedK = { ...k, status };
         if (assignedVpa && assignedVpa.trim()) {
           updatedK.upiId = assignedVpa.trim();
