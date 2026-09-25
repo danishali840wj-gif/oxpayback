@@ -197,8 +197,8 @@ router.get(['/settings', '/admin/settings'], async (req, res) => {
     }
 
     if (settings) {
-      memorySettings.usdtAddress = settings.usdtAddress || memorySettings.usdtAddress;
-      memorySettings.usdtQrUrl = settings.usdtQrUrl || memorySettings.usdtQrUrl;
+      if (settings.usdtAddress !== undefined) memorySettings.usdtAddress = settings.usdtAddress;
+      if (settings.usdtQrUrl !== undefined) memorySettings.usdtQrUrl = settings.usdtQrUrl;
       if (settings.buyRewardTiers && settings.buyRewardTiers.length > 0) {
         memorySettings.buyRewardTiers = settings.buyRewardTiers;
       }
