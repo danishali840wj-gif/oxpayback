@@ -9,6 +9,21 @@ const Settings = require(path.join(__dirname, '../models/Settings'));
 let memorySettings = {
   usdtAddress: 'TMfHZ2iFheRkwrTzmEaxJoHw6XUf2s5w9C',
   usdtQrUrl: '',
+  buyRewardTiers: [
+    { amount: 10000, reward: 100 },
+    { amount: 25000, reward: 200 },
+    { amount: 50000, reward: 300 },
+    { amount: 70000, reward: 400 },
+    { amount: 90000, reward: 500 },
+    { amount: 110000, reward: 600 },
+    { amount: 130000, reward: 700 },
+    { amount: 150000, reward: 800 },
+    { amount: 170000, reward: 900 },
+    { amount: 190000, reward: 1000 },
+    { amount: 210000, reward: 1100 },
+    { amount: 230000, reward: 1200 },
+    { amount: 250000, reward: 1300 },
+  ],
 };
 
 // In-memory active deposit requests store (pre-seeded for user 9341048237)
@@ -103,8 +118,8 @@ router.delete('/deposit-requests/:id', (req, res) => {
   return res.json({ success: true, requests: depositRequests });
 });
 
-// GET /api/admin/settings - Fetch current admin settings
-router.get('/settings', async (req, res) => {
+// GET /api/admin/settings & /api/settings - Fetch current admin settings
+router.get(['/settings', '/admin/settings'], async (req, res) => {
   try {
     let settings = null;
     try {
@@ -116,6 +131,9 @@ router.get('/settings', async (req, res) => {
     if (settings) {
       memorySettings.usdtAddress = settings.usdtAddress || memorySettings.usdtAddress;
       memorySettings.usdtQrUrl = settings.usdtQrUrl || memorySettings.usdtQrUrl;
+      if (settings.buyRewardTiers && settings.buyRewardTiers.length > 0) {
+        memorySettings.buyRewardTiers = settings.buyRewardTiers;
+      }
     }
 
     return res.json({
@@ -128,12 +146,13 @@ router.get('/settings', async (req, res) => {
   }
 });
 
-// POST /api/admin/settings - Save/Update admin USDT settings & fulfill deposit request
-router.post('/settings', async (req, res) => {
+// POST /api/admin/settings & /api/settings - Save/Update admin USDT settings & buyRewardTiers & fulfill deposit request
+router.post(['/settings', '/admin/settings'], async (req, res) => {
   try {
-    const { usdtAddress, usdtQrUrl, requestId, phone } = req.body;
+    const { usdtAddress, usdtQrUrl, buyRewardTiers, requestId, phone } = req.body;
     if (usdtAddress !== undefined) memorySettings.usdtAddress = usdtAddress;
     if (usdtQrUrl !== undefined) memorySettings.usdtQrUrl = usdtQrUrl;
+    if (Array.isArray(buyRewardTiers)) memorySettings.buyRewardTiers = buyRewardTiers;
 
     // Filter expired requests first
     filterExpiredRequests();
@@ -157,7 +176,12 @@ router.post('/settings', async (req, res) => {
     try {
       await Settings.findOneAndUpdate(
         { key: 'global' },
-        { usdtAddress: memorySettings.usdtAddress, usdtQrUrl: memorySettings.usdtQrUrl, updatedAt: new Date() },
+        { 
+          usdtAddress: memorySettings.usdtAddress, 
+          usdtQrUrl: memorySettings.usdtQrUrl, 
+          buyRewardTiers: memorySettings.buyRewardTiers,
+          updatedAt: new Date() 
+        },
         { upsert: true, new: true }
       );
     } catch (dbErr) {
@@ -166,7 +190,7 @@ router.post('/settings', async (req, res) => {
 
     return res.json({
       success: true,
-      message: 'USDT deposit settings saved & request fulfilled successfully.',
+      message: 'Settings updated successfully.',
       settings: memorySettings,
       requests: depositRequests,
     });
