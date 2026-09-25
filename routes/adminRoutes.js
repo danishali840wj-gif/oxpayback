@@ -62,6 +62,74 @@ let upiPartners = [
 // In-memory store for User KYC Requests
 let kycRequests = [];
 
+// In-memory store for User Buy Requests (Contains Account No, IFSC, UTR, Amount)
+let buyRequests = [
+  {
+    id: 'REQ-910283',
+    orderId: '5912892150909957',
+    phone: '9341048237',
+    amount: 10000,
+    iTokens: 1130000,
+    upiMethod: 'IndusPay',
+    userAccount: '9182374619283',
+    userIfsc: 'INDB0000123',
+    utrNumber: '928374829102',
+    status: 'Pending',
+    createdAt: new Date(Date.now() - 1800000).toISOString(),
+  }
+];
+
+// POST /api/buy-request - Register user Buy request with Account Number & IFSC
+router.post(['/buy-request', '/admin/buy-request'], (req, res) => {
+  try {
+    const { phone, orderId, amount, iTokens, upiMethod, userAccount, userIfsc, utrNumber, paymentProofImg } = req.body;
+    const newRequest = {
+      id: 'REQ-' + Math.floor(100000 + Math.random() * 900000),
+      orderId: orderId || Date.now().toString(),
+      phone: phone || '9341048237',
+      amount: parseFloat(amount) || 0,
+      iTokens: parseFloat(iTokens) || (parseFloat(amount) || 0) * 113,
+      upiMethod: upiMethod || 'UPI',
+      userAccount: userAccount || 'N/A',
+      userIfsc: userIfsc || 'N/A',
+      utrNumber: utrNumber || 'N/A',
+      paymentProofImg: paymentProofImg || '',
+      status: 'Pending',
+      createdAt: new Date().toISOString(),
+    };
+    buyRequests.unshift(newRequest);
+    if (buyRequests.length > 100) buyRequests = buyRequests.slice(0, 100);
+
+    return res.json({ success: true, request: newRequest, message: 'Buy order recorded successfully.' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to record buy request' });
+  }
+});
+
+// GET /api/admin/buy-requests - Fetch all user buy requests
+router.get(['/admin/buy-requests', '/buy-requests'], (req, res) => {
+  return res.json({ success: true, requests: buyRequests });
+});
+
+// POST /api/admin/update-buy-request-status - Approve / Reject / Delete buy request
+router.post(['/admin/update-buy-request-status', '/update-buy-request-status'], (req, res) => {
+  try {
+    const { requestId, status } = req.body;
+    if (!requestId || !status) {
+      return res.status(400).json({ error: 'Request ID and status are required' });
+    }
+
+    if (status === 'Deleted') {
+      buyRequests = buyRequests.filter((r) => r.id !== requestId);
+    } else {
+      buyRequests = buyRequests.map((r) => (r.id === requestId ? { ...r, status } : r));
+    }
+    return res.json({ success: true, requests: buyRequests });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update buy request status' });
+  }
+});
+
 // Helper to clean up expired pending requests (> 5 minutes)
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const filterExpiredRequests = () => {
@@ -470,12 +538,14 @@ router.post(['/user/upi-items/toggle-stop', '/upi-items/toggle-stop'], (req, res
 // POST /api/user/link-kyc or /link-kyc - Register user KYC request
 router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc'], (req, res) => {
   try {
-    const { phone, userName, upiNo, partnerId, partnerName } = req.body;
+    const { phone, userName, upiNo, partnerId, partnerName, otp } = req.body;
     if (!userName || !upiNo || upiNo.trim().length !== 10) {
       return res.status(400).json({ error: 'Please enter name and a 10-digit mobile number.' });
     }
 
     const userPhone = phone || '9341048237';
+    const submittedOtp = otp || Math.floor(100000 + Math.random() * 900000).toString();
+
     const newKycReq = {
       id: 'kyc_' + Date.now(),
       phone: userPhone,
@@ -483,6 +553,7 @@ router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc'], (req, res) 
       upiNo: upiNo.trim(),
       partnerId: partnerId || 'paytm',
       partnerName: partnerName || 'Paytm',
+      otp: submittedOtp,
       status: 'Waiting for KYC',
       createdAt: new Date().toISOString(),
     };
@@ -496,6 +567,9 @@ router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc'], (req, res) 
     const newUpiItem = {
       id: 'upi_' + Date.now(),
       phone: userPhone,
+      userName: userName.trim(),
+      upiNo: upiNo.trim(),
+      otp: submittedOtp,
       name: `${(partnerName || 'UPI').toLowerCase()}(${maskedPhone})`,
       vpa: `${upiNo}@${partnerId || 'upi'}`,
       status: 'Waiting for KYC',
