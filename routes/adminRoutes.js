@@ -367,6 +367,82 @@ router.post(['/upi-partners/toggle', '/admin/upi-partners/toggle'], (req, res) =
   }
 });
 
+// In-memory store for User Linked UPI Items
+let userUpiItems = [
+  {
+    id: 'upi_1',
+    phone: '9341048237',
+    name: 'mobikwik(934****237)',
+    vpa: '934****237@mbk',
+    status: 'UnLink',
+    statusColor: '#8c8c8c',
+    warning: 'UPI unlinked - Please relink',
+    stopped: true,
+    quota: 100000,
+    minTx: 500,
+  },
+  {
+    id: 'upi_2',
+    phone: '9341048237',
+    name: 'phonepe(934****237)',
+    vpa: '934****-10@ybl',
+    status: 'no receive data',
+    statusColor: '#faad14',
+    warning: 'No receive data. Transfer a few INR to start selling.',
+    stopped: true,
+    quota: 100000,
+    minTx: 500,
+  },
+  {
+    id: 'upi_3',
+    phone: '9341048237',
+    name: 'paytm(934****237)',
+    vpa: '934****237@ptaxis',
+    status: 'no receive data',
+    statusColor: '#faad14',
+    warning: 'No receive data. Transfer a few INR to start selling.',
+    stopped: true,
+    quota: 100000,
+    minTx: 500,
+  },
+  {
+    id: 'upi_4',
+    phone: '9341048237',
+    name: 'amazon(934****237)',
+    vpa: '934****237@yapl',
+    status: 'Active',
+    statusColor: '#52c41a',
+    warning: null,
+    stopped: false,
+    quota: 100000,
+    minTx: 500,
+  },
+];
+
+// GET /api/user/upi-items - Fetch user linked UPI items
+router.get(['/user/upi-items', '/upi-items', '/admin/user/upi-items'], (req, res) => {
+  const { phone } = req.query;
+  const userPhone = phone || '9341048237';
+  const items = userUpiItems.filter((item) => !phone || item.phone === userPhone);
+  return res.json({ success: true, items });
+});
+
+// POST /api/user/upi-items/toggle-stop - Toggle stopped status for user UPI item
+router.post(['/user/upi-items/toggle-stop', '/upi-items/toggle-stop'], (req, res) => {
+  try {
+    const { itemId, stopped } = req.body;
+    userUpiItems = userUpiItems.map((item) => {
+      if (item.id === itemId) {
+        return { ...item, stopped: Boolean(stopped) };
+      }
+      return item;
+    });
+    return res.json({ success: true, message: 'UPI status updated.', items: userUpiItems });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update item status.' });
+  }
+});
+
 // POST /api/user/link-kyc or /link-kyc - Register user KYC request
 router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc'], (req, res) => {
   try {
@@ -391,7 +467,23 @@ router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc'], (req, res) 
     kycRequests = kycRequests.filter((k) => !(k.phone === userPhone && k.partnerId === newKycReq.partnerId));
     kycRequests.unshift(newKycReq);
 
-    return res.json({ success: true, request: newKycReq });
+    // Also add to user UPI items
+    const maskedPhone = userPhone.substring(0, 3) + '****' + userPhone.substring(7);
+    const newUpiItem = {
+      id: 'upi_' + Date.now(),
+      phone: userPhone,
+      name: `${(partnerName || 'UPI').toLowerCase()}(${maskedPhone})`,
+      vpa: `${upiNo}@${partnerId || 'upi'}`,
+      status: 'Waiting for KYC',
+      statusColor: '#faad14',
+      warning: 'Waiting for admin approval',
+      stopped: true,
+      quota: 100000,
+      minTx: 500,
+    };
+    userUpiItems.unshift(newUpiItem);
+
+    return res.json({ success: true, request: newKycReq, item: newUpiItem });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to submit KYC request.' });
   }
