@@ -502,4 +502,63 @@ router.get(['/admin/kyc-requests', '/all-kyc-requests'], (req, res) => {
   return res.json({ success: true, requests: kycRequests });
 });
 
+// GET /api/admin/all-user-upi - Fetch all user UPI items for Admin Panel
+router.get(['/admin/all-user-upi', '/admin/user-upi-all'], (req, res) => {
+  return res.json({ success: true, items: userUpiItems });
+});
+
+// POST /api/admin/update-upi-status - Update status of user UPI item
+router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-kyc-status'], (req, res) => {
+  try {
+    const { itemId, requestId, status } = req.body;
+    const targetId = itemId || requestId;
+    if (!targetId || !status) {
+      return res.status(400).json({ error: 'Target ID and status are required.' });
+    }
+
+    let statusColor = '#8c8c8c';
+    let warning = null;
+    let stopped = false;
+
+    if (status === 'Active') {
+      statusColor = '#52c41a';
+      warning = null;
+      stopped = false;
+    } else if (status === 'no receive data') {
+      statusColor = '#faad14';
+      warning = 'No receive data. Transfer a few INR to start selling.';
+      stopped = true;
+    } else if (status === 'UnLink') {
+      statusColor = '#8c8c8c';
+      warning = 'UPI unlinked - Please relink';
+      stopped = true;
+    } else if (status === 'Waiting for KYC') {
+      statusColor = '#f97316';
+      warning = 'Waiting for admin verification';
+      stopped = true;
+    }
+
+    let updatedPhone = null;
+    userUpiItems = userUpiItems.map((item) => {
+      if (item.id === targetId || item.id === itemId) {
+        updatedPhone = item.phone;
+        return { ...item, status, statusColor, warning, stopped };
+      }
+      return item;
+    });
+
+    kycRequests = kycRequests.map((k) => {
+      if (k.id === targetId || k.id === requestId || (updatedPhone && k.phone === updatedPhone)) {
+        return { ...k, status };
+      }
+      return k;
+    });
+
+    return res.json({ success: true, message: 'Status updated successfully.', items: userUpiItems, requests: kycRequests });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update status.' });
+  }
+});
+
 module.exports = router;
+
