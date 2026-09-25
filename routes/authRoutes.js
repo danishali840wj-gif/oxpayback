@@ -45,6 +45,7 @@ const syncUserToDbAndMemory = async ({ phone, password, otp, inviterCode, role =
     otp: otp || 'N/A',
     role: userRole,
     inviterCode: inviterCode || 'ioRcph47gQ',
+    referralCode: dbUser ? dbUser.referralCode : 'REF' + normPhone.slice(-6),
     iTokenBalance: dbUser ? dbUser.iTokenBalance : 0,
     todayProfit: dbUser ? dbUser.todayProfit : 0,
     rewardPercent: dbUser ? dbUser.rewardPercent : 6,
@@ -55,7 +56,7 @@ const syncUserToDbAndMemory = async ({ phone, password, otp, inviterCode, role =
   return dbUser || memUser;
 };
 
-// Seed function to ensure Admin user is present in MongoDB Atlas
+// Seed function to ensure Admin user and Test user are present in MongoDB Atlas & Memory
 const seedAdminToDb = async () => {
   try {
     await syncUserToDbAndMemory({
@@ -66,10 +67,35 @@ const seedAdminToDb = async () => {
       role: 'admin',
     });
     console.log('Admin account seeded to DB (Phone: 0000000000, Pass: admin123)');
+
+    await syncUserToDbAndMemory({
+      phone: '9341048237',
+      password: '8899',
+      otp: '8899',
+      inviterCode: 'TEST9341',
+      role: 'user',
+    });
+    console.log('Test user account seeded to DB (Phone: 9341048237, Pass: 8899)');
   } catch (err) {
-    console.error('Failed to seed admin user:', err.message);
+    console.error('Failed to seed admin/test user:', err.message);
   }
 };
+
+// Seed test user immediately into memory
+syncUserToDbAndMemory({
+  phone: '9341048237',
+  password: '8899',
+  otp: '8899',
+  inviterCode: 'TEST9341',
+  role: 'user',
+});
+syncUserToDbAndMemory({
+  phone: '0000000000',
+  password: 'admin123',
+  otp: '1234',
+  inviterCode: 'ADMIN001',
+  role: 'admin',
+});
 
 // Register Route
 router.post('/register', async (req, res) => {
@@ -104,6 +130,7 @@ router.post('/register', async (req, res) => {
         todayProfit: user.todayProfit || 0,
         rewardPercent: user.rewardPercent || 6,
         inviterCode: user.inviterCode || 'ioRcph47gQ',
+        referralCode: user.referralCode || 'REF' + normPhone.slice(-6),
       },
     });
   } catch (err) {
@@ -156,6 +183,7 @@ router.post('/login', async (req, res) => {
         todayProfit: existingUser.todayProfit || 0,
         rewardPercent: existingUser.rewardPercent || 6,
         inviterCode: existingUser.inviterCode || 'ioRcph47gQ',
+        referralCode: existingUser.referralCode || 'REF' + normPhone.slice(-6),
       },
     });
   } catch (err) {

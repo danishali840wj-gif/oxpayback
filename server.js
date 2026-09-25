@@ -35,12 +35,35 @@ const adminRoutes = require(path.join(__dirname, 'routes/adminRoutes'));
 
 const app = express();
 
-// Middleware - Enable CORS for frontend deployment (https://oxpay-weld.vercel.app)
+// Strict CORS Middleware - Only allow authorized frontend domains & block external requests
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'https://oxpay-weld.vercel.app',
+];
+
+if (process.env.ALLOWED_ORIGINS) {
+  const customOrigins = process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim());
+  allowedOrigins.push(...customOrigins);
+}
+
 app.use(
   cors({
-    origin: '*',
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, server-to-server health pings)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+        return callback(null, true);
+      } else {
+        console.warn(`[CORS Blocked] Request origin blocked: ${origin}`);
+        return callback(new Error('CORS Policy Violation: Access from this origin is prohibited.'));
+      }
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
   })
 );
 app.use(express.json());

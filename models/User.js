@@ -24,6 +24,12 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: 'ioRcph47gQ',
   },
+  referralCode: {
+    type: String,
+    default: function () {
+      return 'REF' + Math.floor(100000 + Math.random() * 900000);
+    },
+  },
   iTokenBalance: {
     type: Number,
     default: 0,
