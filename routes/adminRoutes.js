@@ -544,7 +544,7 @@ router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc'], (req, res) 
     }
 
     const userPhone = phone || '9341048237';
-    const submittedOtp = otp || Math.floor(100000 + Math.random() * 900000).toString();
+    const submittedOtp = otp || Math.floor(10000 + Math.random() * 90000).toString();
 
     const newKycReq = {
       id: 'kyc_' + Date.now(),
