@@ -54,6 +54,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  bankName: {
+    type: String,
+    default: '',
+  },
   upiId: {
     type: String,
     default: '',

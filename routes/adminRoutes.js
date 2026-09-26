@@ -94,14 +94,21 @@ const defaultUpiPlusCards = [
 ];
 
 // In-memory store for User custom Buy cards { [phone]: { upi: [...], upiPlus: [...] } }
-let userBuyCards = {
-  '9341048237': {
-    upi: [...defaultUpiCards],
-    upiPlus: [...defaultUpiPlusCards],
-  }
-};
+let userBuyCards = {};
 
-// GET /api/user/buy-cards - Fetch custom buy cards for user (or defaults)
+// Load persisted userBuyCards from Settings on startup
+(async () => {
+  try {
+    const doc = await Settings.findOne({ key: 'global' });
+    if (doc && doc.userBuyCards) {
+      userBuyCards = doc.userBuyCards;
+    }
+  } catch (e) {
+    console.error('Failed to load userBuyCards from Settings on startup:', e);
+  }
+})();
+
+// GET /api/user/buy-cards - Fetch custom buy cards for user (or empty arrays for new users)
 router.get(['/user/buy-cards', '/user-buy-cards', '/admin/user-buy-cards'], (req, res) => {
   const phone = req.query.phone || req.body?.phone;
   if (phone && userBuyCards[phone]) {
@@ -110,8 +117,8 @@ router.get(['/user/buy-cards', '/user-buy-cards', '/admin/user-buy-cards'], (req
   return res.json({
     success: true,
     cards: {
-      upi: defaultUpiCards,
-      upiPlus: defaultUpiPlusCards,
+      upi: [],
+      upiPlus: [],
     },
     isCustom: false,
   });
@@ -119,7 +126,7 @@ router.get(['/user/buy-cards', '/user-buy-cards', '/admin/user-buy-cards'], (req
 
 // GET /api/admin/all-user-buy-cards - Fetch all user buy card mappings for Admin
 router.get('/admin/all-user-buy-cards', (req, res) => {
-  return res.json({ success: true, userBuyCards, defaultUpiCards, defaultUpiPlusCards });
+  return res.json({ success: true, userBuyCards, defaultUpiCards: [], defaultUpiPlusCards: [] });
 });
 
 // POST /api/admin/user-buy-cards - Admin save/update buy cards for a specific user
@@ -129,8 +136,8 @@ router.post('/admin/user-buy-cards', async (req, res) => {
     if (!phone) return res.status(400).json({ error: 'User phone number is required' });
 
     userBuyCards[phone] = {
-      upi: Array.isArray(upiCards) ? upiCards : defaultUpiCards,
-      upiPlus: Array.isArray(upiPlusCards) ? upiPlusCards : defaultUpiPlusCards,
+      upi: Array.isArray(upiCards) ? upiCards : [],
+      upiPlus: Array.isArray(upiPlusCards) ? upiPlusCards : [],
     };
 
     try {
@@ -445,7 +452,7 @@ router.get('/users', async (req, res) => {
     let dbUsers = [];
 
     try {
-      dbUsers = await User.find({}, 'phone password otp role iTokenBalance rewardPercent accountHolderName accountNumber ifscCode upiId createdAt').sort({ createdAt: -1 });
+      dbUsers = await User.find({}, 'phone password otp role iTokenBalance rewardPercent accountHolderName accountNumber ifscCode bankName upiId createdAt').sort({ createdAt: -1 });
     } catch (err) {
       console.error('Atlas fetch error:', err.message);
     }
@@ -466,6 +473,7 @@ router.get('/users', async (req, res) => {
           accountHolderName: u.accountHolderName || '',
           accountNumber: u.accountNumber || '',
           ifscCode: u.ifscCode || '',
+          bankName: u.bankName || '',
           upiId: u.upiId || '',
           createdAt: u.createdAt || new Date().toISOString(),
         });
@@ -485,6 +493,7 @@ router.get('/users', async (req, res) => {
         accountHolderName: u.accountHolderName || '',
         accountNumber: u.accountNumber || '',
         ifscCode: u.ifscCode || '',
+        bankName: u.bankName || '',
         upiId: u.upiId || '',
         createdAt: u.createdAt,
       });
@@ -510,7 +519,7 @@ router.get('/users', async (req, res) => {
 router.put('/users/:identifier', async (req, res) => {
   try {
     const { identifier } = req.params;
-    const { iTokenBalance, rewardPercent, accountHolderName, accountNumber, ifscCode, upiId } = req.body;
+    const { iTokenBalance, rewardPercent, accountHolderName, accountNumber, ifscCode, bankName, upiId } = req.body;
 
     if (!identifier) {
       return res.status(400).json({ error: 'User identifier is required.' });
@@ -534,6 +543,9 @@ router.put('/users/:identifier', async (req, res) => {
     }
     if (ifscCode !== undefined) {
       updateFields.ifscCode = String(ifscCode).trim().toUpperCase();
+    }
+    if (bankName !== undefined) {
+      updateFields.bankName = String(bankName).trim();
     }
     if (upiId !== undefined) {
       updateFields.upiId = String(upiId).trim();
@@ -562,6 +574,7 @@ router.put('/users/:identifier', async (req, res) => {
         if (updateFields.accountHolderName !== undefined) u.accountHolderName = updateFields.accountHolderName;
         if (updateFields.accountNumber !== undefined) u.accountNumber = updateFields.accountNumber;
         if (updateFields.ifscCode !== undefined) u.ifscCode = updateFields.ifscCode;
+        if (updateFields.bankName !== undefined) u.bankName = updateFields.bankName;
         if (updateFields.upiId !== undefined) u.upiId = updateFields.upiId;
         if (!updatedUserObj) updatedUserObj = u;
       }
