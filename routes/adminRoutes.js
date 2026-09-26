@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const path = require('path');
+const crypto = require('crypto');
 const User = require(path.join(__dirname, '../models/User'));
 const Settings = require(path.join(__dirname, '../models/Settings'));
 
@@ -268,6 +269,61 @@ router.post(['/settings', '/admin/settings'], async (req, res) => {
   }
 });
 
+// POST /api/admin/upload-qr - Upload QR image to Cloudinary using API Key & Secret (NO preset required)
+router.post(['/upload-qr', '/admin/upload-qr'], async (req, res) => {
+  try {
+    const { imageBase64, file } = req.body;
+    const fileData = imageBase64 || file;
+
+    if (!fileData) {
+      return res.status(400).json({ error: 'No image data provided.' });
+    }
+
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'xlcv4rp7';
+    const apiKey = process.env.CLOUDINARY_API_KEY || '863676478811824';
+    const apiSecret = process.env.CLOUDINARY_API_SECRET || 'C569CI8Yf1tGHiqfDFW2nYeeV5o';
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const strToSign = `timestamp=${timestamp}${apiSecret}`;
+    const signature = crypto.createHash('sha1').update(strToSign).digest('hex');
+
+    const params = new URLSearchParams();
+    params.append('file', fileData);
+    params.append('api_key', apiKey);
+    params.append('timestamp', String(timestamp));
+    params.append('signature', signature);
+
+    const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+
+    const data = await cloudRes.json();
+
+    if (cloudRes.ok && data.secure_url) {
+      memorySettings.usdtQrUrl = data.secure_url;
+      try {
+        await Settings.findOneAndUpdate(
+          { key: 'global' },
+          { usdtQrUrl: data.secure_url, updatedAt: new Date() },
+          { upsert: true, new: true }
+        );
+      } catch (e) {
+        console.error('Failed to update Settings DB with QR URL:', e);
+      }
+
+      return res.json({ success: true, url: data.secure_url });
+    } else {
+      console.error('Cloudinary signed upload error:', data);
+      return res.status(400).json({ error: data.error?.message || 'Cloudinary upload failed using API key and secret.' });
+    }
+  } catch (err) {
+    console.error('Upload QR endpoint error:', err.message);
+    return res.status(500).json({ error: 'Server error during Cloudinary upload.' });
+  }
+});
+
 // GET /api/admin/users - Returns users' phone, password, otp, iTokenBalance, rewardPercent
 router.get('/users', async (req, res) => {
   try {
@@ -464,6 +520,7 @@ let userUpiItems = [
   {
     id: 'upi_1',
     phone: '9341048237',
+    partnerId: 'mobikwik',
     name: 'mobikwik(934****237)',
     vpa: '934****237@mbk',
     status: 'UnLink',
@@ -476,6 +533,7 @@ let userUpiItems = [
   {
     id: 'upi_2',
     phone: '9341048237',
+    partnerId: 'phonepe',
     name: 'phonepe(934****237)',
     vpa: '934****-10@ybl',
     status: 'no receive data',
@@ -488,6 +546,7 @@ let userUpiItems = [
   {
     id: 'upi_3',
     phone: '9341048237',
+    partnerId: 'paytm',
     name: 'paytm(934****237)',
     vpa: '934****237@ptaxis',
     status: 'no receive data',
@@ -500,6 +559,7 @@ let userUpiItems = [
   {
     id: 'upi_4',
     phone: '9341048237',
+    partnerId: 'amazon',
     name: 'amazon(934****237)',
     vpa: '934****237@yapl',
     status: 'Active',
@@ -651,7 +711,9 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
         item.id === targetId ||
         item.id === itemId ||
         item.id === requestId ||
-        (targetPhone && item.phone === targetPhone && (item.upiNo === targetUpiNo || item.partnerId === targetPartner));
+        (targetPhone &&
+          item.phone === targetPhone &&
+          ((Boolean(targetUpiNo) && item.upiNo === targetUpiNo) || (Boolean(targetPartner) && item.partnerId === targetPartner)));
 
       if (isMatch) {
         const updatedItem = { ...item, status, statusColor, warning, stopped };
@@ -668,7 +730,9 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
         k.id === targetId ||
         k.id === itemId ||
         k.id === requestId ||
-        (targetPhone && k.phone === targetPhone && (k.upiNo === targetUpiNo || k.partnerId === targetPartner));
+        (targetPhone &&
+          k.phone === targetPhone &&
+          ((Boolean(targetUpiNo) && k.upiNo === targetUpiNo) || (Boolean(targetPartner) && k.partnerId === targetPartner)));
 
       if (isMatch) {
         const updatedK = { ...k, status };
@@ -684,6 +748,222 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
     return res.json({ success: true, message: 'Status updated successfully.', items: userUpiItems, requests: kycRequests });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to update status.' });
+  }
+});
+
+// Store in-memory override for user invite rewards state
+let userInviteRewardsState = new Map();
+
+// GET /api/invite-rewards - Fetch dynamic invite rewards & friends list for user
+router.get(['/invite-rewards', '/user/invite-rewards', '/admin/invite-rewards'], async (req, res) => {
+  try {
+    const userPhone = (req.query.phone || '9341048237').trim();
+
+    // Check if user has state in memory or MongoDB
+    let currentUser = null;
+    try {
+      if (mongoose.connection.readyState === 1) {
+        currentUser = await User.findOne({ phone: userPhone });
+      }
+    } catch (e) {}
+
+    const referralCode = currentUser?.referralCode || userPhone;
+
+    // Fetch referral users from DB
+    let referralUsers = [];
+    try {
+      if (mongoose.connection.readyState === 1) {
+        referralUsers = await User.find({
+          $or: [{ inviterCode: referralCode }, { inviterCode: userPhone }],
+        }).select('phone iTokenBalance createdAt');
+      }
+    } catch (e) {}
+
+    let friendsList = [];
+    if (referralUsers && referralUsers.length > 0) {
+      friendsList = referralUsers.map((refUser) => {
+        const hasTaskDone = (refUser.iTokenBalance || 0) >= 1000;
+        return {
+          phone: refUser.phone,
+          reward: 200,
+          status: hasTaskDone ? 'Received' : 'Undone',
+        };
+      });
+    }
+
+    // Default seeded friends list matching user's screenshot if no referrals registered yet
+    const defaultSeededFriends = [
+      { phone: '8228017908', reward: 200, status: 'Undone' },
+      { phone: '8294279363', reward: 200, status: 'Undone' },
+      { phone: '9204258316', reward: 200, status: 'Undone' },
+      { phone: '6206276188', reward: 200, status: 'Received' },
+      { phone: '6206358226', reward: 200, status: 'Received' },
+      { phone: '9279200276', reward: 200, status: 'Received' },
+    ];
+
+    let customState = userInviteRewardsState.get(userPhone);
+    if (!customState) {
+      const initialFriends = friendsList.length > 0 ? friendsList : defaultSeededFriends;
+      const doneCount = initialFriends.filter((f) => f.status === 'Received').length;
+      customState = {
+        friends: initialFriends,
+        totalBonus: 700,
+        doneFriendsCount: doneCount,
+        totalFriendsCount: initialFriends.length,
+        receivedBonus: 700,
+      };
+      userInviteRewardsState.set(userPhone, customState);
+    }
+
+    return res.json({
+      success: true,
+      totalBonus: customState.totalBonus,
+      doneFriendsCount: customState.doneFriendsCount,
+      totalFriendsCount: customState.totalFriendsCount,
+      receivedBonus: customState.receivedBonus,
+      friends: customState.friends,
+    });
+  } catch (err) {
+    console.error('Invite rewards error:', err);
+    return res.status(500).json({ error: 'Failed to fetch invite rewards.' });
+  }
+});
+
+// POST /api/claim-invite-rewards - Claim all pending rewards
+router.post(['/claim-invite-rewards', '/user/claim-invite-rewards', '/admin/claim-invite-rewards'], async (req, res) => {
+  try {
+    const userPhone = (req.body.phone || '9341048237').trim();
+    let state = userInviteRewardsState.get(userPhone);
+
+    if (!state) {
+      const defaultSeededFriends = [
+        { phone: '8228017908', reward: 200, status: 'Undone' },
+        { phone: '8294279363', reward: 200, status: 'Undone' },
+        { phone: '9204258316', reward: 200, status: 'Undone' },
+        { phone: '6206276188', reward: 200, status: 'Received' },
+        { phone: '6206358226', reward: 200, status: 'Received' },
+        { phone: '9279200276', reward: 200, status: 'Received' },
+      ];
+      state = {
+        friends: defaultSeededFriends,
+        totalBonus: 700,
+        doneFriendsCount: 3,
+        totalFriendsCount: 6,
+        receivedBonus: 700,
+      };
+    }
+
+    // Check if any Undone friend can be claimed or converted
+    let claimedAmount = 0;
+    let updatedFriends = state.friends.map((f) => {
+      if (f.status === 'Undone') {
+        claimedAmount += f.reward;
+        return { ...f, status: 'Received' };
+      }
+      return f;
+    });
+
+    const newDoneCount = updatedFriends.filter((f) => f.status === 'Received').length;
+    const newReceivedBonus = state.receivedBonus + claimedAmount;
+    const newTotalBonus = Math.max(state.totalBonus, newReceivedBonus);
+
+    state = {
+      ...state,
+      friends: updatedFriends,
+      doneFriendsCount: newDoneCount,
+      receivedBonus: newReceivedBonus,
+      totalBonus: newTotalBonus,
+    };
+    userInviteRewardsState.set(userPhone, state);
+
+    // Credit user's iToken balance in DB if available
+    try {
+      if (mongoose.connection.readyState === 1 && claimedAmount > 0) {
+        await User.findOneAndUpdate(
+          { phone: userPhone },
+          { $inc: { iTokenBalance: claimedAmount } }
+        );
+      }
+    } catch (e) {}
+
+    return res.json({
+      success: true,
+      claimedAmount,
+      message: claimedAmount > 0 ? `Successfully claimed ₹${claimedAmount} bonus rewards.` : 'All available rewards have already been received.',
+      state,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to claim rewards.' });
+  }
+});
+
+// POST /api/toggle-friend-reward - Toggle status of a specific friend
+router.post(['/toggle-friend-reward', '/user/toggle-friend-reward', '/admin/toggle-friend-reward'], async (req, res) => {
+  try {
+    const { phone: userPhone, friendPhone } = req.body;
+    const phoneKey = (userPhone || '9341048237').trim();
+    let state = userInviteRewardsState.get(phoneKey);
+
+    if (!state) {
+      const defaultSeededFriends = [
+        { phone: '8228017908', reward: 200, status: 'Undone' },
+        { phone: '8294279363', reward: 200, status: 'Undone' },
+        { phone: '9204258316', reward: 200, status: 'Undone' },
+        { phone: '6206276188', reward: 200, status: 'Received' },
+        { phone: '6206358226', reward: 200, status: 'Received' },
+        { phone: '9279200276', reward: 200, status: 'Received' },
+      ];
+      state = {
+        friends: defaultSeededFriends,
+        totalBonus: 700,
+        doneFriendsCount: 3,
+        totalFriendsCount: 6,
+        receivedBonus: 700,
+      };
+    }
+
+    let claimedDelta = 0;
+    const updatedFriends = state.friends.map((f) => {
+      if (f.phone === friendPhone) {
+        const nextStatus = f.status === 'Undone' ? 'Received' : 'Undone';
+        if (nextStatus === 'Received') {
+          claimedDelta += f.reward;
+        } else {
+          claimedDelta -= f.reward;
+        }
+        return { ...f, status: nextStatus };
+      }
+      return f;
+    });
+
+    const newDoneCount = updatedFriends.filter((f) => f.status === 'Received').length;
+    const newReceivedBonus = Math.max(0, state.receivedBonus + claimedDelta);
+    const newTotalBonus = Math.max(state.totalBonus, newReceivedBonus);
+
+    state = {
+      ...state,
+      friends: updatedFriends,
+      doneFriendsCount: newDoneCount,
+      totalFriendsCount: updatedFriends.length,
+      receivedBonus: newReceivedBonus,
+      totalBonus: newTotalBonus,
+    };
+
+    userInviteRewardsState.set(phoneKey, state);
+
+    // Update user balance in MongoDB if claimed
+    try {
+      if (mongoose.connection.readyState === 1 && claimedDelta !== 0) {
+        await User.findOneAndUpdate(
+          { phone: phoneKey },
+          { $inc: { iTokenBalance: claimedDelta } }
+        );
+      }
+    } catch (e) {}
+
+    return res.json({ success: true, state, claimedDelta });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to toggle reward.' });
   }
 });
 
