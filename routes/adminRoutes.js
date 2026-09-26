@@ -267,12 +267,18 @@ router.post(['/settings', '/admin/settings'], async (req, res) => {
       depositRequests.forEach((r) => {
         if (requestId && r.id === requestId) {
           r.status = 'success';
+          r.usdtAddress = usdtAddress;
+          r.usdtQrUrl = usdtQrUrl;
           r.fulfilledAt = new Date().toISOString();
         } else if (phone && r.phone === phone && r.status === 'pending_qr') {
           r.status = 'success';
+          r.usdtAddress = usdtAddress;
+          r.usdtQrUrl = usdtQrUrl;
           r.fulfilledAt = new Date().toISOString();
         } else if (!requestId && !phone && r.status === 'pending_qr') {
           r.status = 'success';
+          r.usdtAddress = usdtAddress;
+          r.usdtQrUrl = usdtQrUrl;
           r.fulfilledAt = new Date().toISOString();
         }
       });
