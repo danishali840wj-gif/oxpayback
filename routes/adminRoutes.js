@@ -131,21 +131,21 @@ router.post(['/admin/update-buy-request-status', '/update-buy-request-status'], 
   }
 });
 
-// Helper to clean up expired pending requests (> 5 minutes)
-const FIVE_MINUTES_MS = 5 * 60 * 1000;
+// Helper to clean up expired pending requests (> 30 minutes)
+const THIRTY_MINUTES_MS = 30 * 60 * 1000;
 const filterExpiredRequests = () => {
   const now = Date.now();
   depositRequests = depositRequests.filter((r) => {
     if (r.status === 'pending_qr') {
       const age = now - new Date(r.createdAt).getTime();
-      return age < FIVE_MINUTES_MS; // Keep only if less than 5 minutes old
+      return age < THIRTY_MINUTES_MS; // Keep only if less than 30 minutes old
     }
-    return true; // Keep completed/success requests
+    return true; // Keep completed/success requests forever
   });
 };
 
 // POST /api/deposit-request - Register user USDT deposit request
-router.post('/deposit-request', (req, res) => {
+router.post('/deposit-request', async (req, res) => {
   try {
     const { phone, usdtAmount, iTokens } = req.body;
     const userPhone = phone || 'Guest User';
@@ -159,14 +159,22 @@ router.post('/deposit-request', (req, res) => {
     const newRequest = {
       id: Date.now().toString(),
       phone: userPhone,
-      usdtAmount: parseFloat(usdtAmount) || 100,
-      iTokens: parseFloat(iTokens) || parseFloat(usdtAmount || 100) * 113,
+      usdtAmount: parseFloat(usdtAmount) || 0,
+      iTokens: parseFloat(iTokens) || parseFloat(usdtAmount || 0) * 113,
       createdAt: new Date().toISOString(),
       status: 'pending_qr',
     };
 
     depositRequests.unshift(newRequest);
-    if (depositRequests.length > 50) depositRequests = depositRequests.slice(0, 50);
+    if (depositRequests.length > 100) depositRequests = depositRequests.slice(0, 100);
+
+    try {
+      await Settings.findOneAndUpdate(
+        { key: 'global' },
+        { depositRequests, updatedAt: new Date() },
+        { upsert: true }
+      );
+    } catch (e) {}
 
     return res.json({ success: true, request: newRequest });
   } catch (err) {
@@ -174,16 +182,35 @@ router.post('/deposit-request', (req, res) => {
   }
 });
 
-// GET /api/admin/deposit-requests - Fetch all deposit requests for Admin Panel (Auto-purges >5 min expired pending)
-router.get('/deposit-requests', (req, res) => {
+// GET /api/admin/deposit-requests - Fetch all deposit requests for Admin Panel (Auto-purges >30 min expired pending)
+router.get('/deposit-requests', async (req, res) => {
   filterExpiredRequests();
+  try {
+    const settings = await Settings.findOne({ key: 'global' });
+    if (settings && Array.isArray(settings.depositRequests) && settings.depositRequests.length > 0) {
+      // Merge success requests from DB if not present in memory
+      const existingIds = new Set(depositRequests.map((r) => r.id));
+      settings.depositRequests.forEach((dbReq) => {
+        if (!existingIds.has(dbReq.id)) {
+          depositRequests.push(dbReq);
+        }
+      });
+      filterExpiredRequests();
+    }
+  } catch (e) {}
   return res.json({ success: true, requests: depositRequests });
 });
 
 // DELETE /api/admin/deposit-requests/:id - Clear request
-router.delete('/deposit-requests/:id', (req, res) => {
+router.delete('/deposit-requests/:id', async (req, res) => {
   const { id } = req.params;
   depositRequests = depositRequests.filter((r) => r.id !== id);
+  try {
+    await Settings.findOneAndUpdate(
+      { key: 'global' },
+      { depositRequests, updatedAt: new Date() }
+    );
+  } catch (e) {}
   return res.json({ success: true, requests: depositRequests });
 });
 
@@ -202,6 +229,15 @@ router.get(['/settings', '/admin/settings'], async (req, res) => {
       if (settings.usdtQrUrl !== undefined) memorySettings.usdtQrUrl = settings.usdtQrUrl;
       if (settings.buyRewardTiers && settings.buyRewardTiers.length > 0) {
         memorySettings.buyRewardTiers = settings.buyRewardTiers;
+      }
+      if (Array.isArray(settings.depositRequests) && settings.depositRequests.length > 0) {
+        const existingIds = new Set(depositRequests.map((r) => r.id));
+        settings.depositRequests.forEach((dbReq) => {
+          if (!existingIds.has(dbReq.id)) {
+            depositRequests.push(dbReq);
+          }
+        });
+        filterExpiredRequests();
       }
     }
 
@@ -249,6 +285,7 @@ router.post(['/settings', '/admin/settings'], async (req, res) => {
           usdtAddress: memorySettings.usdtAddress, 
           usdtQrUrl: memorySettings.usdtQrUrl, 
           buyRewardTiers: memorySettings.buyRewardTiers,
+          depositRequests: depositRequests,
           updatedAt: new Date() 
         },
         { upsert: true, new: true }

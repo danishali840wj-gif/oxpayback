@@ -22,6 +22,7 @@ const settingsSchema = new mongoose.Schema({
       { amount: 250000, reward: 1300 },
     ],
   },
+  depositRequests: { type: Array, default: [] },
   updatedAt: { type: Date, default: Date.now },
 });
 
