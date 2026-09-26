@@ -80,6 +80,73 @@ let buyRequests = [
   }
 ];
 
+// Default Buy Cards Template for UPI and UPI Plus
+const defaultUpiCards = [
+  { id: '1', orderNo: '5912583346981893', price: 709, rewardPercentText: '4.5%+10%', rewardAmount: 41.91, totalIToken: 750.91 },
+  { id: '2', orderNo: '5912892150909957', price: 800, rewardPercentText: '4.5%+10%', rewardAmount: 46.00, totalIToken: 846.00 },
+  { id: '3', orderNo: '5910647411575813', price: 850, rewardPercentText: '4.5%+10%', rewardAmount: 48.25, totalIToken: 898.25 },
+  { id: '4', orderNo: '5912580602792965', price: 2108, rewardPercentText: '4.5%+10%', rewardAmount: 104.86, totalIToken: 2212.86 },
+];
+
+const defaultUpiPlusCards = [
+  { id: 'p1', orderNo: '5912583346981894', price: 1000, rewardPercentText: '5%+10%', rewardAmount: 150.00, totalIToken: 1150.00 },
+  { id: 'p2', orderNo: '5912892150909958', price: 2500, rewardPercentText: '5%+10%', rewardAmount: 375.00, totalIToken: 2875.00 },
+];
+
+// In-memory store for User custom Buy cards { [phone]: { upi: [...], upiPlus: [...] } }
+let userBuyCards = {
+  '9341048237': {
+    upi: [...defaultUpiCards],
+    upiPlus: [...defaultUpiPlusCards],
+  }
+};
+
+// GET /api/user/buy-cards - Fetch custom buy cards for user (or defaults)
+router.get(['/user/buy-cards', '/user-buy-cards', '/admin/user-buy-cards'], (req, res) => {
+  const phone = req.query.phone || req.body?.phone;
+  if (phone && userBuyCards[phone]) {
+    return res.json({ success: true, cards: userBuyCards[phone], isCustom: true });
+  }
+  return res.json({
+    success: true,
+    cards: {
+      upi: defaultUpiCards,
+      upiPlus: defaultUpiPlusCards,
+    },
+    isCustom: false,
+  });
+});
+
+// GET /api/admin/all-user-buy-cards - Fetch all user buy card mappings for Admin
+router.get('/admin/all-user-buy-cards', (req, res) => {
+  return res.json({ success: true, userBuyCards, defaultUpiCards, defaultUpiPlusCards });
+});
+
+// POST /api/admin/user-buy-cards - Admin save/update buy cards for a specific user
+router.post('/admin/user-buy-cards', async (req, res) => {
+  try {
+    const { phone, upiCards, upiPlusCards } = req.body;
+    if (!phone) return res.status(400).json({ error: 'User phone number is required' });
+
+    userBuyCards[phone] = {
+      upi: Array.isArray(upiCards) ? upiCards : defaultUpiCards,
+      upiPlus: Array.isArray(upiPlusCards) ? upiPlusCards : defaultUpiPlusCards,
+    };
+
+    try {
+      await Settings.findOneAndUpdate(
+        { key: 'global' },
+        { userBuyCards, updatedAt: new Date() },
+        { upsert: true }
+      );
+    } catch (e) {}
+
+    return res.json({ success: true, cards: userBuyCards[phone], userBuyCards, message: `Buy cards saved for user ${phone}` });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to save user buy cards' });
+  }
+});
+
 // POST /api/buy-request - Register user Buy request with Account Number & IFSC
 router.post(['/buy-request', '/admin/buy-request'], (req, res) => {
   try {
@@ -229,6 +296,9 @@ router.get(['/settings', '/admin/settings'], async (req, res) => {
       if (settings.usdtQrUrl !== undefined) memorySettings.usdtQrUrl = settings.usdtQrUrl;
       if (settings.buyRewardTiers && settings.buyRewardTiers.length > 0) {
         memorySettings.buyRewardTiers = settings.buyRewardTiers;
+      }
+      if (settings.userBuyCards) {
+        userBuyCards = { ...userBuyCards, ...settings.userBuyCards };
       }
       if (Array.isArray(settings.depositRequests) && settings.depositRequests.length > 0) {
         const existingIds = new Set(depositRequests.map((r) => r.id));
