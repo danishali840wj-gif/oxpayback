@@ -42,6 +42,22 @@ const userSchema = new mongoose.Schema({
     type: Number,
     default: 6,
   },
+  accountHolderName: {
+    type: String,
+    default: '',
+  },
+  accountNumber: {
+    type: String,
+    default: '',
+  },
+  ifscCode: {
+    type: String,
+    default: '',
+  },
+  upiId: {
+    type: String,
+    default: '',
+  },
   createdAt: {
     type: Date,
     default: Date.now,
