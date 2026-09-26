@@ -293,6 +293,43 @@ router.post('/verify-otp', async (req, res) => {
     res.status(500).json({ error: 'Server error during OTP verification.' });
   }
 });
+
+// GET /api/auth/user/:phone - Fetch latest user info
+router.get('/user/:phone', async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const normPhone = String(phone).trim();
+    if (isDbConnected()) {
+      const user = await User.findOne({ phone: normPhone });
+      if (user) {
+        return res.json({
+          success: true,
+          user: {
+            id: user._id,
+            phone: user.phone,
+            role: user.role,
+            iTokenBalance: user.iTokenBalance || 0,
+            todayProfit: user.todayProfit || 0,
+            rewardPercent: user.rewardPercent ?? 6,
+            inviterCode: user.inviterCode,
+            referralCode: user.referralCode,
+          },
+        });
+      }
+    }
+    const memUser = memoryUsers.get(normPhone);
+    if (memUser) {
+      return res.json({
+        success: true,
+        user: memUser,
+      });
+    }
+    return res.status(404).json({ error: 'User not found' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.memoryUsers = memoryUsers;
 router.seedAdminToDb = seedAdminToDb;
 
