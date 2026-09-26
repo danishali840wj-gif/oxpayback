@@ -735,22 +735,8 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
       stopped = true;
     }
 
-    // Find target record in either kycRequests or userUpiItems
-    const targetKyc = kycRequests.find((k) => k.id === targetId || k.id === itemId || k.id === requestId);
-    const targetUpi = userUpiItems.find((u) => u.id === targetId || u.id === itemId || u.id === requestId);
-
-    const targetPhone = targetKyc?.phone || targetUpi?.phone;
-    const targetPartner = targetKyc?.partnerId || targetUpi?.partnerId;
-    const targetUpiNo = targetKyc?.upiNo || targetUpi?.upiNo;
-
     userUpiItems = userUpiItems.map((item) => {
-      const isMatch =
-        item.id === targetId ||
-        item.id === itemId ||
-        item.id === requestId ||
-        (targetPhone &&
-          item.phone === targetPhone &&
-          ((Boolean(targetUpiNo) && item.upiNo === targetUpiNo) || (Boolean(targetPartner) && item.partnerId === targetPartner)));
+      const isMatch = item.id === targetId || item.id === itemId || item.id === requestId;
 
       if (isMatch) {
         const updatedItem = { ...item, status, statusColor, warning, stopped };
@@ -763,13 +749,7 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
     });
 
     kycRequests = kycRequests.map((k) => {
-      const isMatch =
-        k.id === targetId ||
-        k.id === itemId ||
-        k.id === requestId ||
-        (targetPhone &&
-          k.phone === targetPhone &&
-          ((Boolean(targetUpiNo) && k.upiNo === targetUpiNo) || (Boolean(targetPartner) && k.partnerId === targetPartner)));
+      const isMatch = k.id === targetId || k.id === itemId || k.id === requestId;
 
       if (isMatch) {
         const updatedK = { ...k, status };
@@ -785,6 +765,72 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
     return res.json({ success: true, message: 'Status updated successfully.', items: userUpiItems, requests: kycRequests });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to update status.' });
+  }
+});
+
+// POST /api/admin/add-user-upi - Add new UPI account for a specific user
+router.post(['/admin/add-user-upi', '/add-user-upi'], (req, res) => {
+  try {
+    const { phone, partnerId, partnerName, vpa, status } = req.body;
+    if (!phone || !vpa) {
+      return res.status(400).json({ error: 'Phone number and UPI VPA/ID are required.' });
+    }
+
+    const cleanPhone = phone.trim();
+    const maskedPhone = cleanPhone.length >= 10 ? cleanPhone.substring(0, 3) + '****' + cleanPhone.substring(7) : cleanPhone;
+    const pName = partnerName || (partnerId ? partnerId.toUpperCase() : 'UPI');
+    const initialStatus = status || 'Active';
+
+    let statusColor = '#8c8c8c';
+    let warning = null;
+    let stopped = false;
+
+    if (initialStatus === 'Active') {
+      statusColor = '#52c41a';
+      warning = null;
+      stopped = false;
+    } else if (initialStatus === 'no receive data') {
+      statusColor = '#faad14';
+      warning = 'No receive data. Transfer a few INR to start selling.';
+      stopped = true;
+    } else if (initialStatus === 'Waiting for KYC') {
+      statusColor = '#f97316';
+      warning = 'Waiting for admin verification';
+      stopped = true;
+    }
+
+    const newUpiItem = {
+      id: 'upi_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+      phone: cleanPhone,
+      partnerId: (partnerId || 'paytm').toLowerCase(),
+      name: `${pName.toLowerCase()}(${maskedPhone})`,
+      vpa: vpa.trim(),
+      status: initialStatus,
+      statusColor,
+      warning,
+      stopped,
+      quota: 100000,
+      minTx: 500,
+      createdAt: new Date().toISOString(),
+    };
+
+    userUpiItems.unshift(newUpiItem);
+
+    return res.json({ success: true, message: 'UPI account added successfully.', item: newUpiItem, items: userUpiItems });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to add UPI account.' });
+  }
+});
+
+// DELETE /api/admin/delete-user-upi/:itemId - Delete user UPI item
+router.delete(['/admin/delete-user-upi/:itemId', '/delete-user-upi/:itemId', '/admin/user-upi/:itemId'], (req, res) => {
+  try {
+    const { itemId } = req.params;
+    userUpiItems = userUpiItems.filter((i) => i.id !== itemId);
+    kycRequests = kycRequests.filter((k) => k.id !== itemId);
+    return res.json({ success: true, message: 'UPI account deleted successfully.', items: userUpiItems });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to delete UPI account.' });
   }
 });
 
