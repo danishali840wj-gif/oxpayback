@@ -181,8 +181,13 @@ router.post(['/buy-request', '/admin/buy-request'], (req, res) => {
   }
 });
 
-// GET /api/admin/buy-requests - Fetch all user buy requests
+// GET /api/admin/buy-requests - Fetch all user buy requests (or filter by user phone)
 router.get(['/admin/buy-requests', '/buy-requests'], (req, res) => {
+  const { phone } = req.query;
+  if (phone) {
+    const userReqs = buyRequests.filter((r) => String(r.phone).trim() === String(phone).trim());
+    return res.json({ success: true, requests: userReqs });
+  }
   return res.json({ success: true, requests: buyRequests });
 });
 
@@ -300,8 +305,8 @@ router.post(['/deposit-request', '/admin/deposit-request'], async (req, res) => 
   }
 });
 
-// GET /api/admin/deposit-requests - Fetch all deposit requests for Admin Panel (Auto-purges >30 min expired pending)
-router.get('/deposit-requests', async (req, res) => {
+// GET /api/admin/deposit-requests - Fetch all deposit requests for Admin Panel or user (Auto-purges >30 min expired pending)
+router.get(['/admin/deposit-requests', '/deposit-requests'], async (req, res) => {
   filterExpiredRequests();
   try {
     const settings = await Settings.findOne({ key: 'global' });
@@ -316,6 +321,12 @@ router.get('/deposit-requests', async (req, res) => {
       filterExpiredRequests();
     }
   } catch (e) {}
+  
+  const { phone } = req.query;
+  if (phone) {
+    const userReqs = depositRequests.filter((r) => String(r.phone).trim() === String(phone).trim());
+    return res.json({ success: true, requests: userReqs });
+  }
   return res.json({ success: true, requests: depositRequests });
 });
 
