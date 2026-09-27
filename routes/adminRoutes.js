@@ -187,7 +187,7 @@ router.get(['/admin/buy-requests', '/buy-requests'], (req, res) => {
 });
 
 // POST /api/admin/update-buy-request-status - Approve / Reject / Delete buy request
-router.post(['/admin/update-buy-request-status', '/update-buy-request-status'], (req, res) => {
+router.post(['/admin/update-buy-request-status', '/update-buy-request-status'], async (req, res) => {
   try {
     const { requestId, status } = req.body;
     if (!requestId || !status) {
@@ -197,7 +197,36 @@ router.post(['/admin/update-buy-request-status', '/update-buy-request-status'], 
     if (status === 'Deleted') {
       buyRequests = buyRequests.filter((r) => r.id !== requestId);
     } else {
-      buyRequests = buyRequests.map((r) => (r.id === requestId ? { ...r, status } : r));
+      const target = buyRequests.find((r) => r.id === requestId);
+      if (target) {
+        const oldStatus = target.status;
+        target.status = status;
+
+        if (status === 'Approved' && oldStatus !== 'Approved') {
+          const userPhone = String(target.phone).trim();
+          const tokenAmount = parseFloat(target.iTokens) || (parseFloat(target.amount) || 0) * 113;
+
+          // 1. Credit in-memory user map
+          const authRoutes = require(path.join(__dirname, 'authRoutes'));
+          if (authRoutes.memoryUsers && userPhone && authRoutes.memoryUsers.has(userPhone)) {
+            const u = authRoutes.memoryUsers.get(userPhone);
+            u.iTokenBalance = (parseFloat(u.iTokenBalance) || 0) + tokenAmount;
+          }
+
+          // 2. Credit MongoDB Atlas User
+          try {
+            if (mongoose.connection.readyState === 1 && userPhone) {
+              await User.findOneAndUpdate(
+                { phone: userPhone },
+                { $inc: { iTokenBalance: tokenAmount } },
+                { new: true }
+              );
+            }
+          } catch (dbErr) {
+            console.error('Failed to credit user balance on Buy approval:', dbErr.message);
+          }
+        }
+      }
     }
     return res.json({ success: true, requests: buyRequests });
   } catch (err) {
@@ -290,6 +319,139 @@ router.get('/deposit-requests', async (req, res) => {
   return res.json({ success: true, requests: depositRequests });
 });
 
+// POST /api/deposit-request-transferred - User clicked "I've Transferred"
+router.post(['/deposit-request-transferred', '/admin/deposit-request-transferred'], (req, res) => {
+  try {
+    const { requestId, phone } = req.body;
+    let target = depositRequests.find((r) => (requestId && String(r.id) === String(requestId)) || (phone && r.phone === phone));
+    if (target) {
+      target.status = 'under_review'; // Set status to under_review (Pending Admin Confirmation)
+      target.transferredAt = new Date().toISOString();
+    }
+    return res.json({ success: true, request: target, requests: depositRequests });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update deposit transfer status' });
+  }
+});
+
+// POST /api/admin/approve-deposit-request - Admin confirms/approves USDT deposit & credits user balance
+router.post(['/admin/approve-deposit-request', '/approve-deposit-request'], async (req, res) => {
+  try {
+    const { requestId, status } = req.body; // status: 'success' or 'rejected'
+    const target = depositRequests.find((r) => String(r.id) === String(requestId));
+    if (target) {
+      const oldStatus = target.status;
+      target.status = status || 'success';
+      target.fulfilledAt = new Date().toISOString();
+
+      if ((status === 'success' || status === 'Approved') && oldStatus !== 'success' && oldStatus !== 'Approved') {
+        const userPhone = String(target.phone).trim();
+        const tokenAmount = parseFloat(target.iTokens) || (parseFloat(target.usdtAmount) || 0) * 113;
+
+        // 1. Credit in-memory user map
+        const authRoutes = require(path.join(__dirname, 'authRoutes'));
+        if (authRoutes.memoryUsers && userPhone && authRoutes.memoryUsers.has(userPhone)) {
+          const u = authRoutes.memoryUsers.get(userPhone);
+          u.iTokenBalance = (parseFloat(u.iTokenBalance) || 0) + tokenAmount;
+        }
+
+        // 2. Credit MongoDB Atlas User
+        try {
+          if (mongoose.connection.readyState === 1 && userPhone) {
+            await User.findOneAndUpdate(
+              { phone: userPhone },
+              { $inc: { iTokenBalance: tokenAmount } },
+              { new: true }
+            );
+          }
+        } catch (dbErr) {
+          console.error('Failed to credit user balance on USDT deposit approval:', dbErr.message);
+        }
+      }
+    }
+    return res.json({ success: true, requests: depositRequests });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to approve deposit request' });
+  }
+});
+
+// Store for User Sell Requests
+let sellRequests = [];
+
+// POST /api/sell-request - Register Sell Request from User
+router.post(['/sell-request', '/admin/sell-request'], async (req, res) => {
+  try {
+    const { phone, itokenAmount, amountInr, upiVpa, bankDetails } = req.body;
+    const userPhone = phone || '9341048237';
+    const tokens = parseFloat(itokenAmount) || 0;
+
+    const newSellReq = {
+      id: 'SL' + Date.now().toString().slice(-10),
+      phone: userPhone,
+      itokenAmount: tokens,
+      amountInr: parseFloat(amountInr) || tokens,
+      upiVpa: upiVpa || '',
+      bankDetails: bankDetails || {},
+      status: 'Pending',
+      createdAt: new Date().toISOString(),
+    };
+
+    sellRequests.unshift(newSellReq);
+    if (sellRequests.length > 100) sellRequests = sellRequests.slice(0, 100);
+
+    return res.json({ success: true, request: newSellReq, message: 'Sell request recorded successfully.' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to record sell request' });
+  }
+});
+
+// GET /api/admin/sell-requests - Fetch all Sell requests for Admin Panel & User History
+router.get(['/admin/sell-requests', '/sell-requests'], (req, res) => {
+  return res.json({ success: true, requests: sellRequests });
+});
+
+// POST /api/admin/update-sell-request-status - Approve / Reject / Delete Sell request
+router.post(['/admin/update-sell-request-status', '/update-sell-request-status'], async (req, res) => {
+  try {
+    const { requestId, status } = req.body;
+    if (status === 'Deleted') {
+      sellRequests = sellRequests.filter((r) => r.id !== requestId);
+    } else {
+      const target = sellRequests.find((r) => r.id === requestId);
+      if (target) {
+        const oldStatus = target.status;
+        target.status = status;
+
+        if ((status === 'Approved' || status === 'Completed') && oldStatus !== 'Approved' && oldStatus !== 'Completed') {
+          const userPhone = String(target.phone).trim();
+          const tokenAmount = target.itokenAmount || 0;
+
+          const authRoutes = require(path.join(__dirname, 'authRoutes'));
+          if (authRoutes.memoryUsers && userPhone && authRoutes.memoryUsers.has(userPhone)) {
+            const u = authRoutes.memoryUsers.get(userPhone);
+            u.iTokenBalance = Math.max(0, (parseFloat(u.iTokenBalance) || 0) - tokenAmount);
+          }
+
+          try {
+            if (mongoose.connection.readyState === 1 && userPhone) {
+              await User.findOneAndUpdate(
+                { phone: userPhone },
+                { $inc: { iTokenBalance: -tokenAmount } },
+                { new: true }
+              );
+            }
+          } catch (dbErr) {
+            console.error('Failed to deduct user balance on Sell approval:', dbErr.message);
+          }
+        }
+      }
+    }
+    return res.json({ success: true, requests: sellRequests });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update sell request status' });
+  }
+});
+
 // DELETE /api/admin/deposit-requests/:id - Clear request
 router.delete('/deposit-requests/:id', async (req, res) => {
   const { id } = req.params;
@@ -354,21 +516,21 @@ router.post(['/settings', '/admin/settings'], async (req, res) => {
     // Filter expired requests first
     filterExpiredRequests();
 
-    // Mark the request as 'success' when admin uploads address & QR image!
+    // Mark the request as 'qr_ready' when admin uploads address & QR image so user can pay!
     if (memorySettings.usdtAddress && memorySettings.usdtQrUrl) {
       depositRequests.forEach((r) => {
         if (requestId && r.id === requestId) {
-          r.status = 'success';
+          r.status = 'qr_ready';
           r.usdtAddress = usdtAddress;
           r.usdtQrUrl = usdtQrUrl;
           r.fulfilledAt = new Date().toISOString();
         } else if (phone && r.phone === phone && r.status === 'pending_qr') {
-          r.status = 'success';
+          r.status = 'qr_ready';
           r.usdtAddress = usdtAddress;
           r.usdtQrUrl = usdtQrUrl;
           r.fulfilledAt = new Date().toISOString();
         } else if (!requestId && !phone && r.status === 'pending_qr') {
-          r.status = 'success';
+          r.status = 'qr_ready';
           r.usdtAddress = usdtAddress;
           r.usdtQrUrl = usdtQrUrl;
           r.fulfilledAt = new Date().toISOString();
