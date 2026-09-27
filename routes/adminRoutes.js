@@ -158,6 +158,11 @@ router.post('/admin/user-buy-cards', async (req, res) => {
 router.post(['/buy-request', '/admin/buy-request'], (req, res) => {
   try {
     const { phone, orderId, amount, iTokens, upiMethod, userAccount, userIfsc, utrNumber, paymentProofImg } = req.body;
+
+    if (!paymentProofImg || typeof paymentProofImg !== 'string' || !paymentProofImg.trim()) {
+      return res.status(400).json({ success: false, error: 'Payment proof screenshot is mandatory before confirming order.' });
+    }
+
     const newRequest = {
       id: 'REQ-' + Math.floor(100000 + Math.random() * 900000),
       orderId: orderId || Date.now().toString(),
@@ -168,7 +173,7 @@ router.post(['/buy-request', '/admin/buy-request'], (req, res) => {
       userAccount: userAccount || 'N/A',
       userIfsc: userIfsc || 'N/A',
       utrNumber: utrNumber || 'N/A',
-      paymentProofImg: paymentProofImg || '',
+      paymentProofImg: paymentProofImg,
       status: 'Pending',
       createdAt: new Date().toISOString(),
     };
@@ -333,11 +338,15 @@ router.get(['/admin/deposit-requests', '/deposit-requests'], async (req, res) =>
 // POST /api/deposit-request-transferred - User clicked "I've Transferred"
 router.post(['/deposit-request-transferred', '/admin/deposit-request-transferred'], (req, res) => {
   try {
-    const { requestId, phone } = req.body;
+    const { requestId, phone, proofImage } = req.body;
+    if (!proofImage) {
+      return res.status(400).json({ error: 'Payment screenshot proof is mandatory.' });
+    }
     let target = depositRequests.find((r) => (requestId && String(r.id) === String(requestId)) || (phone && r.phone === phone));
     if (target) {
       target.status = 'under_review'; // Set status to under_review (Pending Admin Confirmation)
       target.transferredAt = new Date().toISOString();
+      target.proofImage = proofImage;
     }
     return res.json({ success: true, request: target, requests: depositRequests });
   } catch (err) {
