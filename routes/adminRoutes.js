@@ -219,16 +219,31 @@ const filterExpiredRequests = () => {
 };
 
 // POST /api/deposit-request - Register user USDT deposit request
-router.post('/deposit-request', async (req, res) => {
+router.post(['/deposit-request', '/admin/deposit-request'], async (req, res) => {
   try {
-    const { phone, usdtAmount, iTokens } = req.body;
+    const { phone, usdtAmount, iTokens, requestId } = req.body;
     const userPhone = phone || 'Guest User';
 
     // Auto-clean expired pending requests first
     filterExpiredRequests();
 
-    // Remove previous pending requests from same user
-    depositRequests = depositRequests.filter((r) => !(r.phone === userPhone && r.status === 'pending_qr'));
+    const now = Date.now();
+
+    // Check if user already has an active deposit request (pending_qr or success) within the 30-minute window
+    let existingReq = depositRequests.find((r) => {
+      const isIdMatch = requestId && String(r.id) === String(requestId);
+      const isUserMatch = r.phone === userPhone;
+      const age = now - new Date(r.createdAt).getTime();
+      return (isIdMatch || isUserMatch) && age < THIRTY_MINUTES_MS;
+    });
+
+    if (existingReq) {
+      if (usdtAmount && parseFloat(usdtAmount) > 0 && existingReq.status === 'pending_qr') {
+        existingReq.usdtAmount = parseFloat(usdtAmount);
+        existingReq.iTokens = parseFloat(iTokens) || parseFloat(usdtAmount) * 113;
+      }
+      return res.json({ success: true, request: existingReq, isExisting: true });
+    }
 
     const newRequest = {
       id: Date.now().toString(),
