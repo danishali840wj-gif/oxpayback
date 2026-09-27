@@ -515,11 +515,11 @@ router.get('/users', async (req, res) => {
   }
 });
 
-// PUT /api/admin/users/:identifier - Update user's iTokenBalance, rewardPercent, and bank/upi details
+// PUT /api/admin/users/:identifier - Update user's phone, password, iTokenBalance, rewardPercent, and bank/upi details
 router.put('/users/:identifier', async (req, res) => {
   try {
     const { identifier } = req.params;
-    const { iTokenBalance, rewardPercent, accountHolderName, accountNumber, ifscCode, bankName, upiId } = req.body;
+    const { phone, password, iTokenBalance, rewardPercent, accountHolderName, accountNumber, ifscCode, bankName, upiId } = req.body;
 
     if (!identifier) {
       return res.status(400).json({ error: 'User identifier is required.' });
@@ -528,7 +528,34 @@ router.put('/users/:identifier', async (req, res) => {
     const authRoutes = require(path.join(__dirname, 'authRoutes'));
     const memoryUsers = authRoutes.memoryUsers || new Map();
 
+    const isObjectId = mongoose.Types.ObjectId.isValid(identifier);
+    const query = isObjectId ? { _id: identifier } : { phone: identifier };
+
+    let existingUser = null;
+    try {
+      existingUser = await User.findOne(query);
+    } catch (err) {
+      console.error('Atlas find user error:', err.message);
+    }
+
+    const oldPhone = existingUser ? existingUser.phone : identifier;
     const updateFields = {};
+
+    if (phone !== undefined && String(phone).trim() !== '') {
+      const newPhone = String(phone).trim();
+      if (existingUser && existingUser.phone !== newPhone) {
+        const phoneCheck = await User.findOne({ phone: newPhone, _id: { $ne: existingUser._id } });
+        if (phoneCheck) {
+          return res.status(400).json({ error: `Phone number ${newPhone} is already in use by another user.` });
+        }
+      }
+      updateFields.phone = newPhone;
+    }
+
+    if (password !== undefined && String(password).trim() !== '') {
+      updateFields.password = String(password).trim();
+    }
+
     if (iTokenBalance !== undefined && !isNaN(Number(iTokenBalance))) {
       updateFields.iTokenBalance = Number(iTokenBalance);
     }
@@ -555,9 +582,6 @@ router.put('/users/:identifier', async (req, res) => {
 
     // Update MongoDB Atlas
     try {
-      const isObjectId = mongoose.Types.ObjectId.isValid(identifier);
-      const query = isObjectId ? { _id: identifier } : { phone: identifier };
-
       const dbUser = await User.findOneAndUpdate(query, { $set: updateFields }, { new: true });
       if (dbUser) {
         updatedUserObj = dbUser.toObject();
@@ -567,8 +591,10 @@ router.put('/users/:identifier', async (req, res) => {
     }
 
     // Update in memoryUsers Map if present
-    for (const [phoneKey, u] of memoryUsers.entries()) {
-      if (phoneKey === identifier || u.id === identifier || u._id === identifier || String(u.id) === String(identifier)) {
+    for (const [phoneKey, u] of Array.from(memoryUsers.entries())) {
+      if (phoneKey === oldPhone || phoneKey === identifier || u.id === identifier || u._id === identifier || String(u.id) === String(identifier)) {
+        if (updateFields.phone !== undefined) u.phone = updateFields.phone;
+        if (updateFields.password !== undefined) u.password = updateFields.password;
         if (updateFields.iTokenBalance !== undefined) u.iTokenBalance = updateFields.iTokenBalance;
         if (updateFields.rewardPercent !== undefined) u.rewardPercent = updateFields.rewardPercent;
         if (updateFields.accountHolderName !== undefined) u.accountHolderName = updateFields.accountHolderName;
@@ -576,13 +602,33 @@ router.put('/users/:identifier', async (req, res) => {
         if (updateFields.ifscCode !== undefined) u.ifscCode = updateFields.ifscCode;
         if (updateFields.bankName !== undefined) u.bankName = updateFields.bankName;
         if (updateFields.upiId !== undefined) u.upiId = updateFields.upiId;
+
+        if (updateFields.phone && updateFields.phone !== phoneKey) {
+          memoryUsers.delete(phoneKey);
+          memoryUsers.set(updateFields.phone, u);
+        }
         if (!updatedUserObj) updatedUserObj = u;
+      }
+    }
+
+    // If phone number changed, transfer userBuyCards mapping as well
+    if (oldPhone && updateFields.phone && oldPhone !== updateFields.phone) {
+      if (typeof userBuyCards !== 'undefined' && userBuyCards[oldPhone]) {
+        userBuyCards[updateFields.phone] = userBuyCards[oldPhone];
+        delete userBuyCards[oldPhone];
+        try {
+          await Settings.findOneAndUpdate(
+            { key: 'global' },
+            { userBuyCards, updatedAt: new Date() },
+            { upsert: true }
+          );
+        } catch (e) {}
       }
     }
 
     return res.json({
       success: true,
-      message: 'User wallet amount, reward percentage, and bank/UPI details updated successfully.',
+      message: 'User credentials and parameters updated successfully.',
       user: updatedUserObj,
     });
   } catch (err) {
