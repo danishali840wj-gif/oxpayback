@@ -1263,77 +1263,103 @@ router.delete(['/admin/delete-user-upi/:itemId', '/delete-user-upi/:itemId', '/a
   }
 });
 
-// Store in-memory override for user invite rewards state
-let userInviteRewardsState = new Map();
+// Store claimed referral rewards set: userPhone -> Set of claimed friend phones
+const claimedReferralsMap = new Map();
+
+// Helper to fetch all referred users for a given user phone
+const getReferredUsersForPhone = async (userPhone) => {
+  const normPhone = String(userPhone).trim();
+  const authRoutes = require(path.join(__dirname, 'authRoutes'));
+
+  let userRefCode = normPhone;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const u = await User.findOne({ phone: normPhone });
+      if (u && u.referralCode) userRefCode = u.referralCode;
+    } catch (e) {}
+  } else if (authRoutes.memoryUsers && authRoutes.memoryUsers.has(normPhone)) {
+    const memU = authRoutes.memoryUsers.get(normPhone);
+    if (memU && memU.referralCode) userRefCode = memU.referralCode;
+  }
+
+  const foundPhones = new Set();
+  const referredList = [];
+
+  // Query MongoDB Atlas
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const dbRefs = await User.find({
+        $or: [{ inviterCode: userRefCode }, { inviterCode: normPhone }],
+      }).select('phone iTokenBalance createdAt');
+
+      dbRefs.forEach((r) => {
+        if (r.phone && r.phone !== normPhone && !foundPhones.has(r.phone)) {
+          foundPhones.add(r.phone);
+          referredList.push({
+            phone: r.phone,
+            iTokenBalance: r.iTokenBalance || 0,
+            createdAt: r.createdAt,
+          });
+        }
+      });
+    } catch (e) {}
+  }
+
+  // Check in-memory store
+  if (authRoutes.memoryUsers) {
+    for (let [p, u] of authRoutes.memoryUsers.entries()) {
+      if (p !== normPhone && !foundPhones.has(p)) {
+        if (u.inviterCode === userRefCode || u.inviterCode === normPhone) {
+          foundPhones.add(p);
+          referredList.push({
+            phone: p,
+            iTokenBalance: u.iTokenBalance || 0,
+            createdAt: u.createdAt,
+          });
+        }
+      }
+    }
+  }
+
+  return referredList;
+};
 
 // GET /api/invite-rewards - Fetch dynamic invite rewards & friends list for user
 router.get(['/invite-rewards', '/user/invite-rewards', '/admin/invite-rewards'], async (req, res) => {
   try {
     const userPhone = (req.query.phone || '9341048237').trim();
 
-    // Check if user has state in memory or MongoDB
-    let currentUser = null;
-    try {
-      if (mongoose.connection.readyState === 1) {
-        currentUser = await User.findOne({ phone: userPhone });
-      }
-    } catch (e) {}
+    const referredUsers = await getReferredUsersForPhone(userPhone);
 
-    const referralCode = currentUser?.referralCode || userPhone;
-
-    // Fetch referral users from DB
-    let referralUsers = [];
-    try {
-      if (mongoose.connection.readyState === 1) {
-        referralUsers = await User.find({
-          $or: [{ inviterCode: referralCode }, { inviterCode: userPhone }],
-        }).select('phone iTokenBalance createdAt');
-      }
-    } catch (e) {}
-
-    let friendsList = [];
-    if (referralUsers && referralUsers.length > 0) {
-      friendsList = referralUsers.map((refUser) => {
-        const hasTaskDone = (refUser.iTokenBalance || 0) >= 1000;
-        return {
-          phone: refUser.phone,
-          reward: 200,
-          status: hasTaskDone ? 'Received' : 'Undone',
-        };
-      });
+    let claimedSet = claimedReferralsMap.get(userPhone);
+    if (!claimedSet) {
+      claimedSet = new Set();
+      claimedReferralsMap.set(userPhone, claimedSet);
     }
 
-    // Default seeded friends list matching user's screenshot if no referrals registered yet
-    const defaultSeededFriends = [
-      { phone: '8228017908', reward: 200, status: 'Undone' },
-      { phone: '8294279363', reward: 200, status: 'Undone' },
-      { phone: '9204258316', reward: 200, status: 'Undone' },
-      { phone: '6206276188', reward: 200, status: 'Received' },
-      { phone: '6206358226', reward: 200, status: 'Received' },
-      { phone: '9279200276', reward: 200, status: 'Received' },
-    ];
-
-    let customState = userInviteRewardsState.get(userPhone);
-    if (!customState) {
-      const initialFriends = friendsList.length > 0 ? friendsList : defaultSeededFriends;
-      const doneCount = initialFriends.filter((f) => f.status === 'Received').length;
-      customState = {
-        friends: initialFriends,
-        totalBonus: 700,
-        doneFriendsCount: doneCount,
-        totalFriendsCount: initialFriends.length,
-        receivedBonus: 700,
+    const friends = referredUsers.map((refUser) => {
+      const isClaimed = claimedSet.has(refUser.phone);
+      const isTaskDone = (refUser.iTokenBalance || 0) >= 1000;
+      const status = (isClaimed || isTaskDone) ? 'Received' : 'Undone';
+      return {
+        phone: refUser.phone,
+        reward: 400,
+        status: status,
       };
-      userInviteRewardsState.set(userPhone, customState);
-    }
+    });
+
+    const totalFriendsCount = friends.length;
+    const doneFriendsCount = friends.filter((f) => f.status === 'Received').length;
+    const receivedBonus = doneFriendsCount * 400;
+    const totalBonus = totalFriendsCount * 400;
 
     return res.json({
       success: true,
-      totalBonus: customState.totalBonus,
-      doneFriendsCount: customState.doneFriendsCount,
-      totalFriendsCount: customState.totalFriendsCount,
-      receivedBonus: customState.receivedBonus,
-      friends: customState.friends,
+      totalBonus,
+      doneFriendsCount,
+      totalFriendsCount,
+      receivedBonus,
+      friends,
     });
   } catch (err) {
     console.error('Invite rewards error:', err);
@@ -1345,58 +1371,58 @@ router.get(['/invite-rewards', '/user/invite-rewards', '/admin/invite-rewards'],
 router.post(['/claim-invite-rewards', '/user/claim-invite-rewards', '/admin/claim-invite-rewards'], async (req, res) => {
   try {
     const userPhone = (req.body.phone || '9341048237').trim();
-    let state = userInviteRewardsState.get(userPhone);
+    const referredUsers = await getReferredUsersForPhone(userPhone);
 
-    if (!state) {
-      const defaultSeededFriends = [
-        { phone: '8228017908', reward: 200, status: 'Undone' },
-        { phone: '8294279363', reward: 200, status: 'Undone' },
-        { phone: '9204258316', reward: 200, status: 'Undone' },
-        { phone: '6206276188', reward: 200, status: 'Received' },
-        { phone: '6206358226', reward: 200, status: 'Received' },
-        { phone: '9279200276', reward: 200, status: 'Received' },
-      ];
-      state = {
-        friends: defaultSeededFriends,
-        totalBonus: 700,
-        doneFriendsCount: 3,
-        totalFriendsCount: 6,
-        receivedBonus: 700,
-      };
+    let claimedSet = claimedReferralsMap.get(userPhone);
+    if (!claimedSet) {
+      claimedSet = new Set();
+      claimedReferralsMap.set(userPhone, claimedSet);
     }
 
-    // Check if any Undone friend can be claimed or converted
     let claimedAmount = 0;
-    let updatedFriends = state.friends.map((f) => {
-      if (f.status === 'Undone') {
-        claimedAmount += f.reward;
-        return { ...f, status: 'Received' };
+    const friends = referredUsers.map((refUser) => {
+      const isClaimed = claimedSet.has(refUser.phone);
+      if (!isClaimed) {
+        claimedSet.add(refUser.phone);
+        claimedAmount += 400;
       }
-      return f;
+      return {
+        phone: refUser.phone,
+        reward: 400,
+        status: 'Received',
+      };
     });
 
-    const newDoneCount = updatedFriends.filter((f) => f.status === 'Received').length;
-    const newReceivedBonus = state.receivedBonus + claimedAmount;
-    const newTotalBonus = Math.max(state.totalBonus, newReceivedBonus);
+    const totalFriendsCount = friends.length;
+    const doneFriendsCount = friends.length;
+    const receivedBonus = doneFriendsCount * 400;
+    const totalBonus = totalFriendsCount * 400;
 
-    state = {
-      ...state,
-      friends: updatedFriends,
-      doneFriendsCount: newDoneCount,
-      receivedBonus: newReceivedBonus,
-      totalBonus: newTotalBonus,
-    };
-    userInviteRewardsState.set(userPhone, state);
-
-    // Credit user's iToken balance in DB if available
-    try {
-      if (mongoose.connection.readyState === 1 && claimedAmount > 0) {
-        await User.findOneAndUpdate(
-          { phone: userPhone },
-          { $inc: { iTokenBalance: claimedAmount } }
-        );
+    // Credit user's iToken balance in DB and memory
+    if (claimedAmount > 0) {
+      const authRoutes = require(path.join(__dirname, 'authRoutes'));
+      if (authRoutes.memoryUsers && authRoutes.memoryUsers.has(userPhone)) {
+        const u = authRoutes.memoryUsers.get(userPhone);
+        u.iTokenBalance = (parseFloat(u.iTokenBalance) || 0) + claimedAmount;
       }
-    } catch (e) {}
+
+      try {
+        if (mongoose.connection.readyState === 1) {
+          await User.findOneAndUpdate(
+            { phone: userPhone },
+            { $inc: { iTokenBalance: claimedAmount } }
+          );
+        }
+      } catch (e) {}
+    }
+
+    const state = {
+      totalBonus,
+      doneFriendsCount,
+      totalFriendsCount,
+      receivedBonus,
+      friends,
+    };
 
     return res.json({
       success: true,
@@ -1414,64 +1440,64 @@ router.post(['/toggle-friend-reward', '/user/toggle-friend-reward', '/admin/togg
   try {
     const { phone: userPhone, friendPhone } = req.body;
     const phoneKey = (userPhone || '9341048237').trim();
-    let state = userInviteRewardsState.get(phoneKey);
+    const referredUsers = await getReferredUsersForPhone(phoneKey);
 
-    if (!state) {
-      const defaultSeededFriends = [
-        { phone: '8228017908', reward: 200, status: 'Undone' },
-        { phone: '8294279363', reward: 200, status: 'Undone' },
-        { phone: '9204258316', reward: 200, status: 'Undone' },
-        { phone: '6206276188', reward: 200, status: 'Received' },
-        { phone: '6206358226', reward: 200, status: 'Received' },
-        { phone: '9279200276', reward: 200, status: 'Received' },
-      ];
-      state = {
-        friends: defaultSeededFriends,
-        totalBonus: 700,
-        doneFriendsCount: 3,
-        totalFriendsCount: 6,
-        receivedBonus: 700,
-      };
+    let claimedSet = claimedReferralsMap.get(phoneKey);
+    if (!claimedSet) {
+      claimedSet = new Set();
+      claimedReferralsMap.set(phoneKey, claimedSet);
     }
 
     let claimedDelta = 0;
-    const updatedFriends = state.friends.map((f) => {
-      if (f.phone === friendPhone) {
-        const nextStatus = f.status === 'Undone' ? 'Received' : 'Undone';
-        if (nextStatus === 'Received') {
-          claimedDelta += f.reward;
-        } else {
-          claimedDelta -= f.reward;
-        }
-        return { ...f, status: nextStatus };
-      }
-      return f;
+    if (claimedSet.has(friendPhone)) {
+      claimedSet.delete(friendPhone);
+      claimedDelta = -400;
+    } else {
+      claimedSet.add(friendPhone);
+      claimedDelta = 400;
+    }
+
+    const friends = referredUsers.map((refUser) => {
+      const isClaimed = claimedSet.has(refUser.phone);
+      const isTaskDone = (refUser.iTokenBalance || 0) >= 1000;
+      const status = (isClaimed || isTaskDone) ? 'Received' : 'Undone';
+      return {
+        phone: refUser.phone,
+        reward: 400,
+        status: status,
+      };
     });
 
-    const newDoneCount = updatedFriends.filter((f) => f.status === 'Received').length;
-    const newReceivedBonus = Math.max(0, state.receivedBonus + claimedDelta);
-    const newTotalBonus = Math.max(state.totalBonus, newReceivedBonus);
+    const totalFriendsCount = friends.length;
+    const doneFriendsCount = friends.filter((f) => f.status === 'Received').length;
+    const receivedBonus = doneFriendsCount * 400;
+    const totalBonus = totalFriendsCount * 400;
 
-    state = {
-      ...state,
-      friends: updatedFriends,
-      doneFriendsCount: newDoneCount,
-      totalFriendsCount: updatedFriends.length,
-      receivedBonus: newReceivedBonus,
-      totalBonus: newTotalBonus,
-    };
-
-    userInviteRewardsState.set(phoneKey, state);
-
-    // Update user balance in MongoDB if claimed
-    try {
-      if (mongoose.connection.readyState === 1 && claimedDelta !== 0) {
-        await User.findOneAndUpdate(
-          { phone: phoneKey },
-          { $inc: { iTokenBalance: claimedDelta } }
-        );
+    // Update user balance in DB and memory
+    if (claimedDelta !== 0) {
+      const authRoutes = require(path.join(__dirname, 'authRoutes'));
+      if (authRoutes.memoryUsers && authRoutes.memoryUsers.has(phoneKey)) {
+        const u = authRoutes.memoryUsers.get(phoneKey);
+        u.iTokenBalance = Math.max(0, (parseFloat(u.iTokenBalance) || 0) + claimedDelta);
       }
-    } catch (e) {}
+
+      try {
+        if (mongoose.connection.readyState === 1) {
+          await User.findOneAndUpdate(
+            { phone: phoneKey },
+            { $inc: { iTokenBalance: claimedDelta } }
+          );
+        }
+      } catch (e) {}
+    }
+
+    const state = {
+      totalBonus,
+      doneFriendsCount,
+      totalFriendsCount,
+      receivedBonus,
+      friends,
+    };
 
     return res.json({ success: true, state, claimedDelta });
   } catch (err) {
