@@ -845,14 +845,38 @@ router.delete('/users/:identifier', async (req, res) => {
     const authRoutes = require(path.join(__dirname, 'authRoutes'));
     const memoryUsers = authRoutes.memoryUsers || new Map();
 
+    const isObjectId = mongoose.Types.ObjectId.isValid(identifier);
+    const query = isObjectId ? { _id: identifier } : { phone: identifier };
+
+    let targetUser = null;
+    try {
+      targetUser = await User.findOne(query);
+    } catch (e) {}
+
+    let memUser = memoryUsers.get(identifier);
+    if (!memUser) {
+      for (const u of memoryUsers.values()) {
+        if (u.id === identifier || u._id === identifier || String(u.id) === String(identifier) || u.phone === identifier) {
+          memUser = u;
+          break;
+        }
+      }
+    }
+
+    const isAdmin = (targetUser && targetUser.role === 'admin') ||
+                    (targetUser && targetUser.phone === '0000000000') ||
+                    (memUser && memUser.role === 'admin') ||
+                    (memUser && memUser.phone === '0000000000') ||
+                    identifier === '0000000000';
+
+    if (isAdmin) {
+      return res.status(403).json({ error: 'Admin accounts cannot be deleted.' });
+    }
+
     let deletedCount = 0;
 
     // Delete from MongoDB Atlas
     try {
-      const isObjectId = mongoose.Types.ObjectId.isValid(identifier);
-      const query = isObjectId ? { _id: identifier } : { phone: identifier };
-
-      const targetUser = await User.findOne(query);
       if (targetUser && memoryUsers.has(targetUser.phone)) {
         memoryUsers.delete(targetUser.phone);
       }
