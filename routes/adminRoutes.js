@@ -1111,7 +1111,7 @@ router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc', '/user/save-
       if (submittedOtp) itemMatch.otp = submittedOtp;
       itemMatch.status = 'Waiting for KYC';
       itemMatch.statusColor = '#faad14';
-      itemMatch.warning = 'Waiting for admin approval';
+      itemMatch.warning = 'Waiting for verification';
     } else {
       const maskedPhone = userPhone.length >= 10 ? userPhone.substring(0, 3) + '****' + userPhone.substring(7) : userPhone;
       itemMatch = {
@@ -1124,7 +1124,7 @@ router.post(['/user/link-kyc', '/link-kyc', '/admin/user/link-kyc', '/user/save-
         vpa: `${upiNo}@${partnerId || 'upi'}`,
         status: 'Waiting for KYC',
         statusColor: '#faad14',
-        warning: 'Waiting for admin approval',
+        warning: 'Waiting for verification',
         stopped: true,
         quota: 100000,
         minTx: 500,
@@ -1185,7 +1185,7 @@ router.post(['/admin/update-upi-status', '/update-upi-status', '/admin/update-ky
       stopped = true;
     } else if (status === 'Waiting for KYC') {
       statusColor = '#f97316';
-      warning = 'Waiting for admin verification';
+      warning = 'Waiting for verification';
       stopped = true;
     }
 
@@ -1249,7 +1249,7 @@ router.post(['/admin/add-user-upi', '/add-user-upi'], (req, res) => {
       stopped = true;
     } else if (initialStatus === 'Waiting for KYC') {
       statusColor = '#f97316';
-      warning = 'Waiting for admin verification';
+      warning = 'Waiting for verification';
       stopped = true;
     }
 
