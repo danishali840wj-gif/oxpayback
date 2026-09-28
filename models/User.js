@@ -40,7 +40,7 @@ const userSchema = new mongoose.Schema({
   },
   rewardPercent: {
     type: Number,
-    default: 6,
+    default: 4.5,
   },
   accountHolderName: {
     type: String,

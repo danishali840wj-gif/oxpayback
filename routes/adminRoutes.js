@@ -157,7 +157,7 @@ router.post('/admin/user-buy-cards', async (req, res) => {
 // POST /api/buy-request - Register user Buy request with Account Number & IFSC
 router.post(['/buy-request', '/admin/buy-request'], (req, res) => {
   try {
-    const { phone, orderId, amount, iTokens, upiMethod, userAccount, userIfsc, utrNumber, paymentProofImg } = req.body;
+    const { phone, orderId, amount, iTokens, upiMethod, upiVpa, vpa, userAccount, userIfsc, utrNumber, paymentProofImg } = req.body;
 
     if (!paymentProofImg || typeof paymentProofImg !== 'string' || !paymentProofImg.trim()) {
       return res.status(400).json({ success: false, error: 'Payment proof screenshot is mandatory before confirming order.' });
@@ -170,6 +170,7 @@ router.post(['/buy-request', '/admin/buy-request'], (req, res) => {
       amount: parseFloat(amount) || 0,
       iTokens: parseFloat(iTokens) || (parseFloat(amount) || 0) * 113,
       upiMethod: upiMethod || 'UPI',
+      upiVpa: upiVpa || vpa || req.body.selectedUpiVpa || 'N/A',
       userAccount: userAccount || 'N/A',
       userIfsc: userIfsc || 'N/A',
       utrNumber: utrNumber || 'N/A',
@@ -666,7 +667,7 @@ router.get('/users', async (req, res) => {
           otp: u.otp || 'N/A',
           role: u.role || 'user',
           iTokenBalance: u.iTokenBalance ?? 0,
-          rewardPercent: u.rewardPercent ?? 6,
+          rewardPercent: u.rewardPercent ?? 4.5,
           accountHolderName: u.accountHolderName || '',
           accountNumber: u.accountNumber || '',
           ifscCode: u.ifscCode || '',
@@ -686,7 +687,7 @@ router.get('/users', async (req, res) => {
         otp: u.otp || 'N/A',
         role: u.role || 'user',
         iTokenBalance: u.iTokenBalance ?? 0,
-        rewardPercent: u.rewardPercent ?? 6,
+        rewardPercent: u.rewardPercent ?? 4.5,
         accountHolderName: u.accountHolderName || '',
         accountNumber: u.accountNumber || '',
         ifscCode: u.ifscCode || '',

@@ -48,7 +48,7 @@ const syncUserToDbAndMemory = async ({ phone, password, otp, inviterCode, role =
     referralCode: dbUser ? dbUser.referralCode : 'REF' + normPhone.slice(-6),
     iTokenBalance: dbUser ? dbUser.iTokenBalance : 0,
     todayProfit: dbUser ? dbUser.todayProfit : 0,
-    rewardPercent: dbUser ? dbUser.rewardPercent : 6,
+    rewardPercent: dbUser ? (dbUser.rewardPercent !== undefined ? dbUser.rewardPercent : 4.5) : 4.5,
     createdAt: dbUser ? dbUser.createdAt : new Date().toISOString(),
   };
   memoryUsers.set(normPhone, memUser);
@@ -128,7 +128,7 @@ router.post('/register', async (req, res) => {
         role: user.role || 'user',
         iTokenBalance: user.iTokenBalance || 0,
         todayProfit: user.todayProfit || 0,
-        rewardPercent: user.rewardPercent || 6,
+        rewardPercent: user.rewardPercent !== undefined ? user.rewardPercent : 4.5,
         inviterCode: user.inviterCode || 'ioRcph47gQ',
         referralCode: user.referralCode || 'REF' + normPhone.slice(-6),
       },
@@ -181,7 +181,7 @@ router.post('/login', async (req, res) => {
         role: existingUser.role || 'user',
         iTokenBalance: existingUser.iTokenBalance || 0,
         todayProfit: existingUser.todayProfit || 0,
-        rewardPercent: existingUser.rewardPercent || 6,
+        rewardPercent: existingUser.rewardPercent !== undefined ? existingUser.rewardPercent : 4.5,
         accountHolderName: existingUser.accountHolderName || '',
         accountNumber: existingUser.accountNumber || '',
         ifscCode: existingUser.ifscCode || '',
@@ -279,7 +279,7 @@ router.post('/verify-otp', async (req, res) => {
           role,
           iTokenBalance: 0,
           todayProfit: 0,
-          rewardPercent: 6,
+          rewardPercent: 4.5,
           createdAt: new Date().toISOString(),
         };
         memoryUsers.set(phone, user);
@@ -315,7 +315,7 @@ router.get('/user/:phone', async (req, res) => {
             role: user.role,
             iTokenBalance: user.iTokenBalance || 0,
             todayProfit: user.todayProfit || 0,
-            rewardPercent: user.rewardPercent ?? 6,
+            rewardPercent: user.rewardPercent ?? 4.5,
             accountHolderName: user.accountHolderName || '',
             accountNumber: user.accountNumber || '',
             ifscCode: user.ifscCode || '',
