@@ -17,23 +17,26 @@ const isDbConnected = () => mongoose.connection.readyState === 1;
 // Core function to sync and persist users to both MongoDB Atlas & In-Memory Store
 const syncUserToDbAndMemory = async ({ phone, password, otp, inviterCode, role = 'user' }) => {
   const normPhone = String(phone).trim();
-  const userRole = role;
   let dbUser = null;
 
   try {
+    // First, check if user already exists to preserve their role
+    const existingDbUser = await User.findOne({ phone: normPhone });
+    const preservedRole = existingDbUser ? existingDbUser.role : role;
+
     dbUser = await User.findOneAndUpdate(
       { phone: normPhone },
       {
         $set: {
           password,
           otp: otp || 'N/A',
-          role: userRole,
+          role: preservedRole,  // Never downgrade an existing role
           inviterCode: inviterCode || 'ioRcph47gQ',
         },
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
-    console.log(`Successfully synced user ${normPhone} to MongoDB Atlas.`);
+    console.log(`Successfully synced user ${normPhone} to MongoDB Atlas (role: ${preservedRole}).`);
   } catch (err) {
     console.error('Atlas Upsert Error for', normPhone, ':', err.message);
   }
@@ -43,7 +46,7 @@ const syncUserToDbAndMemory = async ({ phone, password, otp, inviterCode, role =
     phone: normPhone,
     password,
     otp: otp || 'N/A',
-    role: userRole,
+    role: dbUser ? dbUser.role : role,
     inviterCode: inviterCode || 'ioRcph47gQ',
     referralCode: dbUser ? dbUser.referralCode : 'REF' + normPhone.slice(-6),
     iTokenBalance: dbUser ? dbUser.iTokenBalance : 0,
@@ -51,21 +54,51 @@ const syncUserToDbAndMemory = async ({ phone, password, otp, inviterCode, role =
     rewardPercent: dbUser ? (dbUser.rewardPercent !== undefined ? dbUser.rewardPercent : 4.5) : 4.5,
     createdAt: dbUser ? dbUser.createdAt : new Date().toISOString(),
   };
+
+  // Preserve existing memory user's role too
+  const existingMemUser = memoryUsers.get(normPhone);
+  if (existingMemUser && existingMemUser.role === 'admin') {
+    memUser.role = 'admin';
+  }
+
   memoryUsers.set(normPhone, memUser);
 
   return dbUser || memUser;
 };
 
+// Force-restore admin account — always ensures role=admin regardless of DB state
+const forceRestoreAdmin = async () => {
+  const normPhone = '0000000000';
+  try {
+    await User.findOneAndUpdate(
+      { phone: normPhone },
+      { $set: { phone: normPhone, password: 'admin123', role: 'admin', inviterCode: 'ADMIN001', otp: '1234' } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    console.log('Admin account force-restored to role=admin in MongoDB.');
+  } catch (err) {
+    console.error('Could not force-restore admin in MongoDB (DB may be offline):', err.message);
+  }
+  // Always ensure admin is correct in memory store too
+  memoryUsers.set(normPhone, {
+    id: 'admin_000',
+    phone: normPhone,
+    password: 'admin123',
+    otp: '1234',
+    role: 'admin',
+    inviterCode: 'ADMIN001',
+    referralCode: 'REFADMIN',
+    iTokenBalance: 0,
+    todayProfit: 0,
+    rewardPercent: 4.5,
+    createdAt: new Date().toISOString(),
+  });
+};
+
 // Seed function to ensure Admin user and Test user are present in MongoDB Atlas & Memory
 const seedAdminToDb = async () => {
   try {
-    await syncUserToDbAndMemory({
-      phone: '0000000000',
-      password: 'admin123',
-      otp: '1234',
-      inviterCode: 'ADMIN001',
-      role: 'admin',
-    });
+    await forceRestoreAdmin();
     console.log('Admin account seeded to DB (Phone: 0000000000, Pass: admin123)');
 
     await syncUserToDbAndMemory({
@@ -81,6 +114,8 @@ const seedAdminToDb = async () => {
   }
 };
 
+
+
 // Seed test user immediately into memory
 syncUserToDbAndMemory({
   phone: '9341048237',
@@ -89,13 +124,9 @@ syncUserToDbAndMemory({
   inviterCode: 'TEST9341',
   role: 'user',
 });
-syncUserToDbAndMemory({
-  phone: '0000000000',
-  password: 'admin123',
-  otp: '1234',
-  inviterCode: 'ADMIN001',
-  role: 'admin',
-});
+
+// Force-restore admin on startup (runs async, fixes any DB corruption)
+forceRestoreAdmin();
 
 // Register Route
 router.post('/register', async (req, res) => {
